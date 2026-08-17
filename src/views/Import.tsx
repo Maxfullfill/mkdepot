@@ -1,13 +1,15 @@
 import { useState } from 'react'
 import { supabase, upsertChunked } from '../lib/supabase'
 import {
-  readSheet, parsePowerBI, parseMasterItem, parseME2N, parseWMS, parseTrips, type Grid,
+  readSheet, parsePowerBI, parseMasterItem, parseME2N, parseWMS, parseTrips,
+  parseDatastation, type Grid,
 } from '../lib/parsers'
 
-type Kind = 'master_items' | 'power_bi' | 'me2n' | 'wms' | 'trips'
+type Kind = 'master_items' | 'datastation' | 'power_bi' | 'me2n' | 'wms' | 'trips'
 
 const SOURCES: { kind: Kind; title: string; hint: string; sheet?: string }[] = [
   { kind: 'master_items', title: 'Master Item', hint: 'ลิตรต่อชิ้น ขนาดลัง หน่วยโอน — ต้องนำเข้าก่อนไฟล์อื่น เพราะสูตรหารด้วยค่าลิตร', sheet: 'Master Item' },
+  { kind: 'datastation',  title: 'Datastation2 — ทะเบียนสถานี', hint: 'คู่รหัสหน้า (Site Code2) กับ PlantCode — แก้ปัญหาสถานีมีหลายรหัส อัปครั้งเดียวใช้ได้ตลอด', sheet: 'Datastation2' },
   { kind: 'power_bi',     title: 'สต็อกรายสาขา (POWER_BI)', hint: 'คงเหลือและยอดขายเฉลี่ย 7/30/90 วัน — สร้างรายชื่อสาขาให้อัตโนมัติด้วย' },
   { kind: 'me2n',         title: 'ของระหว่างทาง (ME2N)', hint: 'PO ที่สั่งแล้วแต่ของยังไม่ถึงสาขา ระบบจะหักออกจากยอดสั่งใหม่', sheet: 'ME2N' },
   { kind: 'wms',          title: 'สต็อกคลัง (WMS)', hint: 'ของที่คลังมีจริง ใช้จำกัดยอดสั่งไม่ให้เกินของที่มี — ไม่อัปก็คำนวณได้ แต่จะไม่มีการจำกัด' },
@@ -57,6 +59,23 @@ export default function Import({ snapshotDate, setSnapshotDate }: {
       await batch(kind, filename, rows.length)
       say(kind, true, `นำเข้าสินค้า ${rows.length} รายการ${skipped ? ` ข้าม ${skipped} แถว` : ''}` +
         (warnings.length ? `\n${warnings.slice(0, 3).join('\n')}` : ''))
+      return
+    }
+
+    if (kind === 'datastation') {
+      const { rows, skipped } = parseDatastation(grid)
+      if (!rows.length) throw new Error('ไม่พบสถานีในไฟล์ — ชีตที่มีให้เลือก: ' + sheets.join(', '))
+      await upsertChunked('station_master', rows, 'plant_code', tick)
+      await batch(kind, filename, rows.length)
+
+      setProgress('สร้างตารางเทียบรหัส…')
+      const { data: n, error } = await supabase.rpc('sync_alias_from_master')
+      if (error) throw new Error(error.message)
+
+      say(kind, true, [
+        `นำเข้าทะเบียนสถานี ${rows.length} แห่ง${skipped ? ` ข้าม ${skipped} แถว` : ''}`,
+        `สร้างคู่เทียบรหัสอัตโนมัติ ${n ?? 0} คู่ — ตอนนี้ไฟล์เที่ยวรถจับคู่ด้วยรหัสหน้าได้แล้ว`,
+      ].join('\n'))
       return
     }
 
@@ -117,22 +136,62 @@ export default function Import({ snapshotDate, setSnapshotDate }: {
     const { rows, skipped, warnings } = parseTrips(grid)
     if (!rows.length) throw new Error('ไม่พบสาขาในไฟล์เที่ยวรถ — ชีตที่มีให้เลือก: ' + sheets.join(', '))
     const bid = await batch(kind, filename, rows.length)
-    const { data: known } = await supabase.from('stations').select('plant_code')
+    // จับคู่สามชั้น: รหัสหน้า (Site Code2) → รหัสท้าย → ตารางเทียบที่กรอกเอง
+    // รหัสหน้าเชื่อถือได้กว่า เพราะบางสาขารหัสท้ายไม่ตรงกับ PlantCode
+    const [{ data: known }, { data: alias }] = await Promise.all([
+      supabase.from('stations').select('plant_code'),
+      supabase.from('station_alias').select('alias_code, plant_code'),
+    ])
     const have = new Set((known ?? []).map((r) => r.plant_code as string))
-    const usable = rows.filter((r) => have.has(r.plant_code))
-    const unknown = rows.filter((r) => !have.has(r.plant_code)).map((r) => r.plant_code)
+    const map = new Map((alias ?? []).map((r) => [r.alias_code as string, r.plant_code as string]))
+
+    const resolve = (code: string | null): string | null => {
+      if (!code) return null
+      if (have.has(code)) return code
+      const m = map.get(code)
+      return m && have.has(m) ? m : null
+    }
+
+    const usable: { plant_code: string; trip_no: number | null; pickup_point: string | null }[] = []
+    const unresolved: typeof rows = []
+    let viaAlias = 0
+
+    for (const r of rows) {
+      const hit = resolve(r.front_code) ?? resolve(r.tail_code)
+      if (!hit) { unresolved.push(r); continue }
+      if (hit !== r.front_code && hit !== r.tail_code) viaAlias++
+      usable.push({ plant_code: hit, trip_no: r.trip_no, pickup_point: r.pickup_point })
+    }
+
+    // กันซ้ำ: สาขาเดียวอาจปรากฏหลายแถวในไฟล์
+    const dedup = [...new Map(usable.map((u) => [u.plant_code, u])).values()]
+
+    // จำรหัสที่ยังจับคู่ไม่ได้ไว้ ไปผูกทีหลังได้ที่หน้า KPI และค่าคำนวณ
+    if (unresolved.length) {
+      await supabase.from('unmapped_codes').upsert(
+        unresolved.map((r) => ({
+          alias_code: r.front_code ?? r.tail_code ?? '?',
+          sample_name: r.source_name,
+          last_seen: snapshotDate,
+        })),
+        { onConflict: 'alias_code' }
+      )
+    }
+    const unknown = unresolved.map((r) => r.front_code ?? r.tail_code ?? '?')
+    const translated = viaAlias
 
     await upsertChunked('delivery_trips',
-      usable.map((r) => ({ ...r, batch_id: bid, trip_date: snapshotDate })),
+      dedup.map((r) => ({ ...r, batch_id: bid, trip_date: snapshotDate })),
       'trip_date,plant_code', tick)
     await upsertChunked('delivery_plan',
-      usable.map((r) => ({ plant_code: r.plant_code, trip_no: r.trip_no, pickup_point: r.pickup_point, trip_date: snapshotDate })),
+      dedup.map((r) => ({ ...r, trip_date: snapshotDate })),
       'trip_date,plant_code')
 
     say(kind, !unknown.length, [
-      `บันทึกเที่ยวรถ ${usable.length} สาขา สำหรับวันที่ ${snapshotDate}`,
-      skipped ? `ข้าม ${skipped} แถว` : '',
-      unknown.length ? `ไม่รู้จักสาขา ${unknown.length} แห่ง (${unknown.slice(0, 5).join(', ')}) — นำเข้าไฟล์ POWER_BI ก่อน` : '',
+      `บันทึกเที่ยวรถ ${dedup.length} สาขา สำหรับวันที่ ${snapshotDate}`,
+      translated ? `แปลงรหัสด้วยทะเบียนสถานี ${translated} แถว` : '',
+      skipped ? `ข้าม ${skipped} แถวที่ไม่ใช่สถานีในความดูแล` : '',
+      unknown.length ? `จับคู่ไม่ได้ ${unknown.length} รหัส (${unknown.slice(0, 5).join(', ')}) — ไปผูกรหัสที่หน้า KPI และค่าคำนวณ` : '',
       ...warnings,
     ].filter(Boolean).join('\n'))
   }
