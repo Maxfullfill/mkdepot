@@ -249,11 +249,80 @@ export function parseWMS(grid: Grid): ParseResult<DepotRow> {
   }
 }
 
-/* 5. เที่ยวรถ — ชื่อลูกค้าเก็บรหัสสาขาไว้ท้ายสุด เช่น "896 - ท่าม่วง 3-S696" */
+/* ────────────────────────────────────────────────────────────────────
+   5. Datastation2 — master สถานีทั้งประเทศ
+   ให้คู่ Site Code2 (รหัสหน้าชื่อ) → Plant Code (รหัสใน POWER_BI)
+                                                                      */
 
-export interface TripRow { plant_code: string; trip_no: number | null; pickup_point: string | null }
+export interface MasterStationRow {
+  plant_code: string; site_code_1: string | null; site_code_2: string | null
+  station_name: string | null; province: string | null; area: string | null
+  closed_date: string | null
+}
 
-export function parseTrips(grid: Grid): ParseResult<TripRow> {
+export function parseDatastation(grid: Grid): ParseResult<MasterStationRow> {
+  const h = findHeader(grid, ['Plant Code', 'Site Code2'])
+  const c = indexer(grid[h])
+  const i = {
+    plant: need(c('Plant Code'), 'Plant Code'),
+    s1: c('Site Code1'), s2: need(c('Site Code2'), 'Site Code2'),
+    name: c('ชื่อสถานีบริการ'), prov: c('จังหวัด'), area: c('เขตพื้นที่'),
+    closed: c('ปิดสถานี'),
+  }
+  const out = new Map<string, MasterStationRow>()
+  let skipped = 0
+
+  for (let r = h + 1; r < grid.length; r++) {
+    const row = grid[r]; if (!row) continue
+    const plant = String(row[i.plant] ?? '').trim().toUpperCase()
+    if (!/^[A-Z0-9]{4}$/.test(plant)) { skipped++; continue }
+
+    const closedRaw = i.closed >= 0 ? row[i.closed] : null
+    let closed: string | null = null
+    if (closedRaw instanceof Date) closed = closedRaw.toISOString().slice(0, 10)
+    else if (typeof closedRaw === 'string' && /\d{4}-\d{2}-\d{2}/.test(closedRaw)) {
+      closed = closedRaw.slice(0, 10)
+    }
+
+    out.set(plant, {
+      plant_code: plant,
+      site_code_1: i.s1 >= 0 ? String(row[i.s1] ?? '').trim() || null : null,
+      site_code_2: String(row[i.s2] ?? '').trim().toUpperCase() || null,
+      station_name: i.name >= 0 ? String(row[i.name] ?? '').trim() || null : null,
+      province: i.prov >= 0 ? String(row[i.prov] ?? '').trim() || null : null,
+      area: i.area >= 0 ? String(row[i.area] ?? '').trim() || null : null,
+      closed_date: closed,
+    })
+  }
+  return { rows: [...out.values()], skipped, warnings: [] }
+}
+
+
+/* ────────────────────────────────────────────────────────────────────
+   6. เที่ยวรถ
+   ชื่อลูกค้าเก็บรหัสสาขาไว้หลังขีดสุดท้าย ยาว 4 ตัวเสมอ:
+     "076 - ท่ามะกา-S073"                    -> S073
+     "40K - ถ.พระราม2(กม.53)-SG72"           -> SG72
+     "08F - กระทุ่มแบน5(ถ.เศรษฐกิจ)-SB50"    -> SB50
+   ตรวจแล้วกับ PlantCode ทั้ง 151 รหัส และไฟล์เที่ยวรถทั้งหมด — ยาว 4 ตัวทุกรายการ
+   แถวที่ไม่มีขีดท้าย เช่น "อิสรินทร์" คือลูกค้าที่ไม่ใช่สถานีในความดูแล
+                                                                      */
+
+/** คลังที่รับที่ไม่นับเป็นเที่ยวส่ง — รถโอนเป็นเอาท์ซอส ไม่ได้เข้าคลัง */
+export const EXCLUDED_PICKUP = ['รถโอน']
+
+export interface TripRow {
+  /** รหัสหน้าชื่อ = Site Code2 — ตัวหลักที่ใช้จับคู่ เชื่อถือได้กว่ารหัสท้าย */
+  front_code: string | null
+  /** รหัสท้ายชื่อ — บางสาขาตรงกับ PlantCode บางสาขาไม่ตรง */
+  tail_code: string | null
+  trip_no: number | null
+  pickup_point: string | null
+  /** ชื่อลูกค้าเต็มตามไฟล์ ใช้แสดงตอนต้องผูกรหัสเอง */
+  source_name: string
+}
+
+export function parseTrips(grid: Grid): ParseResult<TripRow> & { excluded: number } {
   const h = findHeader(grid, ['ชื่อลูกค้า'])
   const c = indexer(grid[h])
   const ci = need(c('ชื่อลูกค้า'), 'ชื่อลูกค้า')
@@ -263,22 +332,45 @@ export function parseTrips(grid: Grid): ParseResult<TripRow> {
   const out = new Map<string, TripRow>()
   const warnings: string[] = []
   let skipped = 0
+  let excluded = 0
 
   for (let r = h + 1; r < grid.length; r++) {
-    const row = grid[r]; if (!row) continue
+    const row = grid[r]
+    if (!row) continue
+
     const raw = String(row[ci] ?? '').trim()
     if (!raw) { skipped++; continue }
-    const m = raw.match(/-\s*([A-Z]{1,2}\d{2,3}|[A-Z0-9]{4})\s*$/i)
-    if (!m) {
+
+    const pickup = pi >= 0 ? String(row[pi] ?? '').trim() : ''
+
+    // ตัดรถโอนออกก่อน — ของไม่ได้ผ่านคลัง จึงไม่นับเป็นรอบส่งของเรา
+    if (EXCLUDED_PICKUP.some((x) => pickup.includes(x))) { excluded++; continue }
+
+    // รหัสหน้า: อยู่ก่อนขีดแรก ยาวไม่คงที่ (076, 11H, Y69)
+    const fm = raw.match(/^\s*([A-Za-z0-9]{2,4})\s*-/)
+    const front = fm ? fm[1].toUpperCase() : null
+
+    // รหัสท้าย: หลังขีดสุดท้าย ยาว 4 ตัวเสมอ
+    const dash = raw.lastIndexOf('-')
+    const t = dash >= 0 ? raw.slice(dash + 1).trim().toUpperCase() : ''
+    const tail = /^[A-Z0-9]{4}$/.test(t) ? t : null
+
+    if (!front && !tail) {
       if (warnings.length < 5) warnings.push(`ดึงรหัสสาขาจาก "${raw}" ไม่ได้ — ข้ามแถวนี้`)
-      skipped++; continue
+      skipped++
+      continue
     }
-    const plant = m[1].toUpperCase()
-    out.set(plant, {
-      plant_code: plant,
+
+    out.set(front ?? tail!, {
+      front_code: front,
+      tail_code: tail,
       trip_no: ti >= 0 ? num(row[ti]) || null : null,
-      pickup_point: pi >= 0 ? String(row[pi] ?? '').trim() || null : null,
+      pickup_point: pickup || null,
+      source_name: raw,
     })
   }
-  return { rows: [...out.values()], skipped, warnings }
+
+  if (excluded) warnings.push(`ตัดรถโอนออก ${excluded} แถว (ไม่ได้เข้าคลัง จึงไม่นับเป็นรอบส่ง)`)
+
+  return { rows: [...out.values()], skipped, warnings, excluded }
 }
