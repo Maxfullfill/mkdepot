@@ -61,7 +61,7 @@ export default function Import({ snapshotDate, setSnapshotDate }: {
     }
 
     if (kind === 'power_bi') {
-      const { stock, stations, skipped, warnings } = parsePowerBI(grid)
+      const { stock, stations, skipped, warnings, byClass } = parsePowerBI(grid)
       if (!stock.length) throw new Error('ไม่พบข้อมูลสต็อกในไฟล์')
 
       setProgress('บันทึกรายชื่อสาขา…')
@@ -78,8 +78,14 @@ export default function Import({ snapshotDate, setSnapshotDate }: {
         usable.map((s) => ({ ...s, batch_id: bid, snapshot_date: snapshotDate })),
         'snapshot_date,plant_code,mat_code', tick)
 
+      const classLine = Object.entries(byClass)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([k, v]) => `${k} ${v}`)
+        .join(' · ')
+
       say(kind, missing.length === 0, [
         `นำเข้า ${usable.length} แถว จาก ${stations.length} สาขา`,
+        `แยกตามคลาส: ${classLine}`,
         skipped ? `ข้ามแถวว่าง ${skipped} แถว` : '',
         missing.length ? `ข้าม ${missing.length} SKU ที่ยังไม่มีใน Master Item: ${missing.slice(0, 6).join(', ')}${missing.length > 6 ? '…' : ''}` : '',
         ...warnings,

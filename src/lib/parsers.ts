@@ -71,6 +71,8 @@ export interface ParseResult<T> {
 
 export interface StockRow {
   plant_code: string; mat_code: string
+  /** คลาสของสินค้าตัวนี้ที่สาขานี้ — สาขาเดียวมีได้หลายคลาส */
+  class_fix: string | null; class_dyna: string | null; depot_class: string | null
   stock_l: number; stock_pcs: number
   sales_7_l: number; sales_30_l: number; sales_90_l: number
   sales_7_pcs: number; sales_30_pcs: number; sales_90_pcs: number
@@ -90,6 +92,7 @@ export function parsePowerBI(grid: Grid) {
     clsDyn: c('Class-สาขา(3ด.Dyna)'),
     mat: need(c('รหัส (MatCode)', 'MatCode'), 'รหัส (MatCode)'),
     depot: c('คลัง'),
+    depotCls: c('Class-คลัง(3ด.Fix)'),
     stkL: need(c('คงเหลือ(ลิตร)'), 'คงเหลือ(ลิตร)'),
     stkP: need(c('คงเหลือ(ชิ้น)'), 'คงเหลือ(ชิ้น)'),
     s7L: c('ยอดขาย(ลิตร)เฉลี่ย 7 วัน'), s30L: c('ยอดขาย(ลิตร)เฉลี่ย 30 วัน'), s90L: c('ยอดขาย(ลิตร)เฉลี่ย 90 วัน'),
@@ -106,28 +109,44 @@ export function parsePowerBI(grid: Grid) {
     const mat = String(row[i.mat] ?? '').trim().replace(/\.0$/, '')
     if (!plant || !mat) { skipped++; continue }
 
+    const rowClass = String(row[i.clsFix] ?? '').trim()
+    const clean = /^Class [ABC]$/i.test(rowClass)
+      ? 'Class ' + rowClass.slice(-1).toUpperCase()
+      : null
+
     stock.set(`${plant}|${mat}`, {
       plant_code: plant, mat_code: mat,
+      class_fix: clean,
+      class_dyna: String(row[i.clsDyn] ?? '').trim() || null,
+      depot_class: i.depotCls >= 0 ? String(row[i.depotCls] ?? '').trim() || null : null,
       stock_l: num(row[i.stkL]), stock_pcs: Math.round(num(row[i.stkP])),
       sales_7_l: num(row[i.s7L]), sales_30_l: num(row[i.s30L]), sales_90_l: num(row[i.s90L]),
       sales_7_pcs: num(row[i.s7P]), sales_30_pcs: num(row[i.s30P]), sales_90_pcs: num(row[i.s90P]),
     })
 
+    // คลาสที่เก็บกับสาขาเป็นเพียงค่าอ้างอิง — สูตรใช้คลาสรายบรรทัดจาก stock_snapshots
     if (!stations.has(plant)) {
-      const cls = String(row[i.clsFix] ?? '').trim()
       stations.set(plant, {
         plant_code: plant,
         branch_name: String(row[i.branch] ?? '').trim() || plant,
         depot: String(row[i.depot] ?? 'แม่กลอง').trim() || 'แม่กลอง',
-        class_fix: /^Class [ABC]$/.test(cls) ? cls : null,
-        class_dyna: String(row[i.clsDyn] ?? '').trim() || null,
+        class_fix: null,
+        class_dyna: null,
       })
     }
   }
 
   const warnings: string[] = []
   if (i.s30L < 0) warnings.push('ไม่พบคอลัมน์ยอดขายลิตรเฉลี่ย 30 วัน — สูตรคำนวณจะได้ 0')
-  return { stock: [...stock.values()], stations: [...stations.values()], skipped, warnings }
+
+  const rows = [...stock.values()]
+  const byClass = rows.reduce<Record<string, number>>((a, r) => {
+    const k = r.class_fix ?? 'ไม่ระบุ'; a[k] = (a[k] ?? 0) + 1; return a
+  }, {})
+  const noClass = rows.filter((r) => !r.class_fix).length
+  if (noClass) warnings.push(`${noClass} แถวไม่มีคลาสสินค้า — จะไม่ถูกนำมาคำนวณ`)
+
+  return { stock: rows, stations: [...stations.values()], skipped, warnings, byClass }
 }
 
 /* 2. Master Item — ลิตรต่อชิ้น จำเป็นต่อสูตร ต้องนำเข้าก่อนเสมอ */
