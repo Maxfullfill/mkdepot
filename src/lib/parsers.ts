@@ -1,0 +1,265 @@
+import * as XLSX from 'xlsx'
+
+/* ────────────────────────────────────────────────────────────────────
+   ตัวช่วย
+   ไฟล์จริงมีหัวตารางไม่ตรงกันเล็กน้อย เช่น
+     "ยอดขาย(ลิตร) เฉลี่ย 7 วัน"  กับ  "ยอดขาย(ลิตร)เฉลี่ย 7 วัน"
+   จึงตัดช่องว่างทั้งหมดก่อนเทียบ                                       */
+
+const norm = (s: unknown) => String(s ?? '').replace(/\s+/g, '').toLowerCase()
+
+const num = (v: unknown): number => {
+  if (v === null || v === undefined || v === '') return 0
+  const n = typeof v === 'number' ? v : parseFloat(String(v).replace(/,/g, ''))
+  return Number.isFinite(n) ? n : 0
+}
+
+export type Grid = unknown[][]
+
+export async function readSheet(file: File, sheetName?: string): Promise<{ grid: Grid; sheets: string[] }> {
+  const buf = await file.arrayBuffer()
+  const wb = XLSX.read(buf, { type: 'array', cellDates: true })
+  const name = sheetName && wb.SheetNames.includes(sheetName) ? sheetName : wb.SheetNames[0]
+  const grid = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[name], { header: 1, defval: null, raw: true })
+  return { grid, sheets: wb.SheetNames }
+}
+
+/** หาแถวหัวตาราง โดยดูว่าแถวไหนมีคำเหล่านี้ครบ (ไฟล์ export มักมีแถวชื่อรายงาน/ตัวกรองนำหน้า) */
+function findHeader(grid: Grid, must: string[], limit = 12): number {
+  const want = must.map(norm)
+  for (let r = 0; r < Math.min(grid.length, limit); r++) {
+    const cells = (grid[r] || []).map(norm)
+    if (want.every((w) => cells.some((c) => c.includes(w)))) return r
+  }
+  throw new Error(
+    `หาหัวตารางไม่เจอ — ต้องมีคอลัมน์ ${must.join(', ')}\n` +
+      `หัวตารางที่เจอในไฟล์: ${(grid[0] || []).filter(Boolean).slice(0, 12).join(' | ')}`
+  )
+}
+
+function indexer(header: unknown[]) {
+  const cols = header.map(norm)
+  return (...alts: string[]): number => {
+    for (const a of alts) {
+      const k = norm(a)
+      const i = cols.findIndex((c) => c === k)
+      if (i >= 0) return i
+    }
+    for (const a of alts) {
+      const k = norm(a)
+      const i = cols.findIndex((c) => c.includes(k))
+      if (i >= 0) return i
+    }
+    return -1
+  }
+}
+
+const need = (i: number, label: string) => {
+  if (i < 0) throw new Error(`ไม่พบคอลัมน์ "${label}" ในไฟล์`)
+  return i
+}
+
+export interface ParseResult<T> {
+  rows: T[]
+  skipped: number
+  warnings: string[]
+}
+
+/* ────────────────────────────────────────────────────────────────────
+   1. POWER_BI / STATION DOH BY BRANCH
+   ให้ทั้งสต็อกรายสาขา และข้อมูลสาขา (upsert stations ไปด้วยเลย)      */
+
+export interface StockRow {
+  plant_code: string; mat_code: string
+  stock_l: number; stock_pcs: number
+  sales_7_l: number; sales_30_l: number; sales_90_l: number
+  sales_7_pcs: number; sales_30_pcs: number; sales_90_pcs: number
+}
+export interface StationRow {
+  plant_code: string; branch_name: string; depot: string
+  class_fix: string | null; class_dyna: string | null
+}
+
+export function parsePowerBI(grid: Grid) {
+  const h = findHeader(grid, ['PlantCode', 'รหัส (MatCode)'])
+  const c = indexer(grid[h])
+  const i = {
+    plant: need(c('PlantCode'), 'PlantCode'),
+    branch: need(c('สาขา'), 'สาขา'),
+    clsFix: c('Class-สาขา(3ด.Fix)'),
+    clsDyn: c('Class-สาขา(3ด.Dyna)'),
+    mat: need(c('รหัส (MatCode)', 'MatCode'), 'รหัส (MatCode)'),
+    depot: c('คลัง'),
+    stkL: need(c('คงเหลือ(ลิตร)'), 'คงเหลือ(ลิตร)'),
+    stkP: need(c('คงเหลือ(ชิ้น)'), 'คงเหลือ(ชิ้น)'),
+    s7L: c('ยอดขาย(ลิตร)เฉลี่ย 7 วัน'), s30L: c('ยอดขาย(ลิตร)เฉลี่ย 30 วัน'), s90L: c('ยอดขาย(ลิตร)เฉลี่ย 90 วัน'),
+    s7P: c('ยอดขาย(ชิ้น)เฉลี่ย 7 วัน'), s30P: c('ยอดขาย(ชิ้น)เฉลี่ย 30 วัน'), s90P: c('ยอดขาย(ชิ้น)เฉลี่ย 90 วัน'),
+  }
+
+  const stock = new Map<string, StockRow>()
+  const stations = new Map<string, StationRow>()
+  let skipped = 0
+
+  for (let r = h + 1; r < grid.length; r++) {
+    const row = grid[r]; if (!row) continue
+    const plant = String(row[i.plant] ?? '').trim()
+    const mat = String(row[i.mat] ?? '').trim().replace(/\.0$/, '')
+    if (!plant || !mat) { skipped++; continue }
+
+    stock.set(`${plant}|${mat}`, {
+      plant_code: plant, mat_code: mat,
+      stock_l: num(row[i.stkL]), stock_pcs: Math.round(num(row[i.stkP])),
+      sales_7_l: num(row[i.s7L]), sales_30_l: num(row[i.s30L]), sales_90_l: num(row[i.s90L]),
+      sales_7_pcs: num(row[i.s7P]), sales_30_pcs: num(row[i.s30P]), sales_90_pcs: num(row[i.s90P]),
+    })
+
+    if (!stations.has(plant)) {
+      const cls = String(row[i.clsFix] ?? '').trim()
+      stations.set(plant, {
+        plant_code: plant,
+        branch_name: String(row[i.branch] ?? '').trim() || plant,
+        depot: String(row[i.depot] ?? 'แม่กลอง').trim() || 'แม่กลอง',
+        class_fix: /^Class [ABC]$/.test(cls) ? cls : null,
+        class_dyna: String(row[i.clsDyn] ?? '').trim() || null,
+      })
+    }
+  }
+
+  const warnings: string[] = []
+  if (i.s30L < 0) warnings.push('ไม่พบคอลัมน์ยอดขายลิตรเฉลี่ย 30 วัน — สูตรคำนวณจะได้ 0')
+  return { stock: [...stock.values()], stations: [...stations.values()], skipped, warnings }
+}
+
+/* 2. Master Item — ลิตรต่อชิ้น จำเป็นต่อสูตร ต้องนำเข้าก่อนเสมอ */
+
+export interface ItemRow {
+  mat_code: string; desc_en: string | null; desc_th: string | null
+  litre_per_piece: number; pack_size: number | null
+  uom: string | null; transfer_uom: string | null
+}
+
+export function parseMasterItem(grid: Grid): ParseResult<ItemRow> {
+  const h = findHeader(grid, ['MATERIAL CODE', 'LITRE'])
+  const c = indexer(grid[h])
+  const i = {
+    mat: need(c('MATERIAL CODE'), 'MATERIAL CODE'),
+    en: c('DESC'), th: c('DESC (TH)'),
+    litre: need(c('LITRE'), 'LITRE'),
+    pack: c('PACK SIZE'), uom: c('UOM'), tuom: c('หน่วยโอน'),
+  }
+  const out = new Map<string, ItemRow>()
+  const warnings: string[] = []
+  let skipped = 0
+
+  for (let r = h + 1; r < grid.length; r++) {
+    const row = grid[r]; if (!row) continue
+    const mat = String(row[i.mat] ?? '').trim().replace(/\.0$/, '')
+    if (!/^\d{6,}$/.test(mat)) { skipped++; continue }
+    const litre = num(row[i.litre])
+    if (litre <= 0) { warnings.push(`SKU ${mat} ไม่มีค่า LITRE — ข้ามไป เพราะสูตรหารด้วยค่านี้`); skipped++; continue }
+    out.set(mat, {
+      mat_code: mat,
+      desc_en: String(row[i.en] ?? '').trim() || null,
+      desc_th: String(row[i.th] ?? '').trim() || null,
+      litre_per_piece: litre,
+      pack_size: i.pack >= 0 ? num(row[i.pack]) || null : null,
+      uom: i.uom >= 0 ? String(row[i.uom] ?? '').trim() || null : null,
+      transfer_uom: i.tuom >= 0 ? String(row[i.tuom] ?? '').trim() || null : null,
+    })
+  }
+  return { rows: [...out.values()], skipped, warnings }
+}
+
+/* 3. ME2N — ของที่สั่งแล้วยังไม่ถึงสาขา */
+
+export interface TransitRow {
+  plant_code: string; mat_code: string; po_no: string; qty_pcs: number
+}
+
+export function parseME2N(grid: Grid): ParseResult<TransitRow> {
+  const h = findHeader(grid, ['Plant', 'Material'])
+  const c = indexer(grid[h])
+  const i = {
+    plant: need(c('Plant'), 'Plant'),
+    mat: need(c('Material'), 'Material'),
+    po: c('Purchasing Document', 'PO'),
+    qty: need(c('Still to be delivered (qty)', 'Still to be deliv', 'Order Quantity'), 'Still to be delivered'),
+  }
+  const agg = new Map<string, TransitRow>()
+  let skipped = 0
+  for (let r = h + 1; r < grid.length; r++) {
+    const row = grid[r]; if (!row) continue
+    const plant = String(row[i.plant] ?? '').trim()
+    const mat = String(row[i.mat] ?? '').trim().replace(/\.0$/, '')
+    const qty = num(row[i.qty])
+    if (!plant || !mat) { skipped++; continue }
+    if (qty <= 0) continue
+    const po = i.po >= 0 ? String(row[i.po] ?? '').trim() : ''
+    const k = `${plant}|${mat}|${po}`
+    const prev = agg.get(k)
+    if (prev) prev.qty_pcs += qty
+    else agg.set(k, { plant_code: plant, mat_code: mat, po_no: po, qty_pcs: qty })
+  }
+  return { rows: [...agg.values()], skipped, warnings: [] }
+}
+
+/* 4. WMS — สต็อกคลัง รูปแบบไฟล์ยังไม่นิ่ง จึงเดาคอลัมน์แบบยืดหยุ่น */
+
+export interface DepotRow { mat_code: string; qty_pcs: number }
+
+export function parseWMS(grid: Grid): ParseResult<DepotRow> {
+  let h: number
+  try { h = findHeader(grid, ['Material']) }
+  catch { h = findHeader(grid, ['รหัสสินค้า']) }
+  const c = indexer(grid[h])
+  const mi = need(c('Material', 'รหัสสินค้า', 'MATERIAL CODE'), 'Material / รหัสสินค้า')
+  const qi = need(c('Qty', 'จำนวน', 'Unrestricted', 'คงเหลือ', 'Stock'), 'จำนวน / Qty')
+
+  const agg = new Map<string, number>()
+  let skipped = 0
+  for (let r = h + 1; r < grid.length; r++) {
+    const row = grid[r]; if (!row) continue
+    const mat = String(row[mi] ?? '').trim().replace(/\.0$/, '')
+    if (!/^\d{6,}$/.test(mat)) { skipped++; continue }
+    agg.set(mat, (agg.get(mat) ?? 0) + num(row[qi]))
+  }
+  return {
+    rows: [...agg].map(([mat_code, qty_pcs]) => ({ mat_code, qty_pcs })),
+    skipped,
+    warnings: agg.size === 0 ? ['อ่านไฟล์ WMS ไม่ได้สักแถว — ตรวจว่าเลือกชีตถูกไหม'] : [],
+  }
+}
+
+/* 5. เที่ยวรถ — ชื่อลูกค้าเก็บรหัสสาขาไว้ท้ายสุด เช่น "896 - ท่าม่วง 3-S696" */
+
+export interface TripRow { plant_code: string; trip_no: number | null; pickup_point: string | null }
+
+export function parseTrips(grid: Grid): ParseResult<TripRow> {
+  const h = findHeader(grid, ['ชื่อลูกค้า'])
+  const c = indexer(grid[h])
+  const ci = need(c('ชื่อลูกค้า'), 'ชื่อลูกค้า')
+  const ti = c('เที่ยว', 'Trip No.')
+  const pi = c('คลังที่รับ')
+
+  const out = new Map<string, TripRow>()
+  const warnings: string[] = []
+  let skipped = 0
+
+  for (let r = h + 1; r < grid.length; r++) {
+    const row = grid[r]; if (!row) continue
+    const raw = String(row[ci] ?? '').trim()
+    if (!raw) { skipped++; continue }
+    const m = raw.match(/-\s*([A-Z]{1,2}\d{2,3}|[A-Z0-9]{4})\s*$/i)
+    if (!m) {
+      if (warnings.length < 5) warnings.push(`ดึงรหัสสาขาจาก "${raw}" ไม่ได้ — ข้ามแถวนี้`)
+      skipped++; continue
+    }
+    const plant = m[1].toUpperCase()
+    out.set(plant, {
+      plant_code: plant,
+      trip_no: ti >= 0 ? num(row[ti]) || null : null,
+      pickup_point: pi >= 0 ? String(row[pi] ?? '').trim() || null : null,
+    })
+  }
+  return { rows: [...out.values()], skipped, warnings }
+}
