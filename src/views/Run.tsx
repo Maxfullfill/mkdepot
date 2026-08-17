@@ -12,6 +12,16 @@ interface Line {
   branch_name?: string; item_desc?: string
 }
 
+interface Kpi {
+  total_lines: number; in_stock_before: number
+  short_total: number; short_on_trip: number; short_off_trip: number
+  fixed_here: number; stations_total: number; stations_on_trip: number
+  avail_before: number; avail_after: number
+  doh_before: number; doh_after: number
+  over_doh_lines: number; excess_liters: number
+  dead_lines: number; dead_liters: number
+}
+
 const PRIORITY = {
   1: { label: 'ขาดจริง', cls: 'alarm' },
   2: { label: 'เสี่ยงขาด', cls: 'oil' },
@@ -41,12 +51,13 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [diag, setDiag] = useState<string[] | null>(null)
+  const [kpi, setKpi] = useState<Kpi | null>(null)
   const [only, setOnly] = useState<'order' | 'all'>('order')
 
   useEffect(() => setTripDate(snapshotDate), [snapshotDate])
 
   async function calculate() {
-    setBusy(true); setErr(''); setLines([]); setRunId(null); setDiag(null)
+    setBusy(true); setErr(''); setLines([]); setRunId(null); setDiag(null); setKpi(null)
     try {
       const { data, error } = await supabase.rpc('calculate_replenishment', {
         p_trip_date: tripDate,
@@ -57,6 +68,11 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
       setRunId(data as string)
       const n = await load(data as string)
       if (n === 0) await explainEmpty()
+      else {
+        // KPI ต้องนับทั้งพอร์ต ไม่ใช่เฉพาะสาขาที่รถเข้ารอบนี้
+        const { data: k } = await supabase.rpc('kpi_for_run', { p_run_id: data })
+        if (Array.isArray(k) && k.length) setKpi(k[0] as Kpi)
+      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
     } finally { setBusy(false) }
@@ -127,13 +143,10 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
 
   const stats = useMemo(() => {
     const ordered = lines.filter((l) => l.final_pcs > 0)
-    const after = lines.filter((l) => l.on_hand_pcs + l.in_transit_pcs + l.final_pcs > 0).length
     return {
       lines: lines.length,
       stations: new Set(ordered.map((l) => l.plant_code)).size,
       pieces: ordered.reduce((s, l) => s + l.final_pcs, 0),
-      short: lines.filter((l) => l.priority === 1).length,
-      avail: lines.length ? (100 * after) / lines.length : 0,
     }
   }, [lines])
 
@@ -187,12 +200,93 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
       {lines.length > 0 && (
         <>
           <dl className="stats">
-            <div className="stat"><dt>บรรทัดที่คำนวณ</dt><dd>{stats.lines}</dd></div>
-            <div className="stat"><dt>สาขาที่ต้องส่ง</dt><dd>{stats.stations}</dd></div>
-            <div className="stat"><dt>รวมที่ต้องเติม</dt><dd>{stats.pieces.toLocaleString()} <small>ชิ้น</small></dd></div>
-            <div className="stat"><dt>ของขาดตอนนี้</dt><dd style={{ color: stats.short ? 'var(--alarm)' : undefined }}>{stats.short}</dd></div>
-            <div className="stat"><dt>Availability หลังเติม</dt><dd style={{ color: stats.avail >= 97 ? 'var(--ok)' : 'var(--oil)' }}>{stats.avail.toFixed(1)}<small>%</small></dd></div>
+            <div className="stat">
+              <dt>สาขาที่ต้องส่ง</dt>
+              <dd>{stats.stations}{kpi && <small> / {kpi.stations_total}</small>}</dd>
+            </div>
+            <div className="stat">
+              <dt>รวมที่ต้องเติม</dt>
+              <dd>{stats.pieces.toLocaleString()} <small>ชิ้น</small></dd>
+            </div>
+            <div className="stat">
+              <dt>Availability ก่อนส่ง</dt>
+              <dd style={{ color: 'var(--ink-2)' }}>
+                {kpi ? kpi.avail_before?.toFixed(1) : '—'}<small>%</small>
+              </dd>
+            </div>
+            <div className="stat">
+              <dt>Availability หลังส่ง</dt>
+              <dd style={{ color: kpi && kpi.avail_after >= 97 ? 'var(--ok)' : 'var(--alarm)' }}>
+                {kpi ? kpi.avail_after?.toFixed(1) : '—'}<small>%</small>
+              </dd>
+            </div>
+            <div className="stat">
+              <dt>ยังขาดหลังส่ง</dt>
+              <dd style={{ color: kpi && kpi.short_off_trip ? 'var(--alarm)' : undefined }}>
+                {kpi ? kpi.short_off_trip : '—'}
+              </dd>
+            </div>
+            <div className="stat">
+              <dt>DOH ก่อน → หลัง</dt>
+              <dd style={{ color: 'var(--oil)', fontSize: 19 }}>
+                {kpi ? `${kpi.doh_before?.toFixed(0)} → ${kpi.doh_after?.toFixed(0)}` : '—'}
+                <small> วัน</small>
+              </dd>
+            </div>
           </dl>
+
+          {kpi && (
+            <div className={`note ${kpi.avail_after >= 97 ? 'good' : 'bad'}`} style={{ marginBottom: 14 }}>
+              นับทั้ง {kpi.stations_total} สาขาที่ดูแล {kpi.total_lines.toLocaleString()} บรรทัด —
+              รอบนี้รถเข้า {kpi.stations_on_trip} สาขา
+              {' · '}ของขาดตอนนี้ {kpi.short_total} บรรทัด
+              {' '}(รอบนี้แก้ได้ {kpi.fixed_here}
+              {kpi.short_off_trip > 0 && <>, อีก {kpi.short_off_trip} อยู่ในสาขาที่รถไม่ได้เข้า ต้องรอรอบหน้า</>})
+              {kpi.avail_after < 97 && <> — ยังไม่ถึงเป้า 97%</>}
+            </div>
+          )}
+
+          {kpi && (
+            <div className="card" style={{ marginBottom: 14 }}>
+              <h3>DOH — ดูแนวโน้ม ไม่ได้คุมในสูตร</h3>
+              <p className="hint">
+                รอบนี้ทำให้ DOH ขยับจาก {kpi.doh_before?.toFixed(1)} เป็น {kpi.doh_after?.toFixed(1)} วัน
+                ({kpi.doh_after > kpi.doh_before ? '+' : ''}
+                {(kpi.doh_after - kpi.doh_before).toFixed(1)})
+              </p>
+              <table>
+                <tbody>
+                  <tr>
+                    <td style={{ width: 260 }}>บรรทัดที่ DOH เกิน 25 วัน</td>
+                    <td className="num" style={{ width: 90, color: 'var(--oil)' }}>
+                      {kpi.over_doh_lines}
+                    </td>
+                    <td style={{ color: 'var(--ink-3)', fontSize: 12.5 }}>
+                      จาก {kpi.total_lines.toLocaleString()} บรรทัด
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>ส่วนเกินเทียบเพดาน 25 วัน</td>
+                    <td className="num" style={{ color: 'var(--oil)' }}>
+                      {kpi.excess_liters?.toLocaleString()}
+                    </td>
+                    <td style={{ color: 'var(--ink-3)', fontSize: 12.5 }}>ลิตร</td>
+                  </tr>
+                  <tr>
+                    <td>ของไม่ขายเลยใน 30 วัน</td>
+                    <td className="num" style={{ color: 'var(--alarm)' }}>{kpi.dead_lines}</td>
+                    <td style={{ color: 'var(--ink-3)', fontSize: 12.5 }}>
+                      บรรทัด · {kpi.dead_liters?.toLocaleString()} ลิตร
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <div className="note" style={{ marginTop: 12 }}>
+                DOH ลดด้วยการสั่งน้อยลงไม่ได้ — ต่อให้หยุดสั่งทั้งเดือนก็ยังเกินเป้า
+                เพราะส่วนใหญ่เป็นของที่กองอยู่แล้ว ต้องดึงออกหรือโอนเกลี่ยเท่านั้น
+              </div>
+            </div>
+          )}
 
           <div className="row" style={{ marginBottom: 10 }}>
             <button className={`btn ${only === 'order' ? '' : 'ghost'}`} onClick={() => setOnly('order')}>เฉพาะที่ต้องเติม</button>
