@@ -40,12 +40,13 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
   const [lines, setLines] = useState<Line[]>([])
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  const [diag, setDiag] = useState<string[] | null>(null)
   const [only, setOnly] = useState<'order' | 'all'>('order')
 
   useEffect(() => setTripDate(snapshotDate), [snapshotDate])
 
   async function calculate() {
-    setBusy(true); setErr(''); setLines([]); setRunId(null)
+    setBusy(true); setErr(''); setLines([]); setRunId(null); setDiag(null)
     try {
       const { data, error } = await supabase.rpc('calculate_replenishment', {
         p_trip_date: tripDate,
@@ -54,7 +55,8 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
       })
       if (error) throw new Error(error.message)
       setRunId(data as string)
-      await load(data as string)
+      const n = await load(data as string)
+      if (n === 0) await explainEmpty()
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
     } finally { setBusy(false) }
@@ -66,12 +68,49 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
       .select('*, stations(branch_name), items(desc_en)')
       .eq('run_id', id)
       .order('priority').order('plant_code')
-    if (error) { setErr(error.message); return }
-    setLines((data ?? []).map((r: Record<string, unknown>) => ({
+    if (error) { setErr(error.message); return 0 }
+    const rows = (data ?? []).map((r: Record<string, unknown>) => ({
       ...(r as unknown as Line),
       branch_name: (r.stations as { branch_name: string } | null)?.branch_name,
       item_desc: (r.items as { desc_en: string } | null)?.desc_en,
-    })))
+    }))
+    setLines(rows)
+    return rows.length
+  }
+
+  /** คำนวณแล้วได้ 0 บรรทัด — ไล่หาว่าติดตรงไหน แทนที่จะเงียบ */
+  async function explainEmpty() {
+    const snaps = await supabase.from('stock_snapshots')
+      .select('class_fix', { count: 'exact' }).eq('snapshot_date', snapshotDate)
+    const trips = await supabase.from('delivery_plan')
+      .select('plant_code', { count: 'exact', head: true }).eq('trip_date', tripDate)
+    const settings = await supabase.from('settings')
+      .select('key, value').in('key', ['include_class_a', 'include_class_b', 'include_class_c'])
+
+    const rows = (snaps.data ?? []) as { class_fix: string | null }[]
+    const byClass = rows.reduce<Record<string, number>>((a, r) => {
+      const k = r.class_fix ?? 'ไม่มีคลาส'; a[k] = (a[k] ?? 0) + 1; return a
+    }, {})
+    const on = (settings.data ?? [])
+      .filter((s) => Number(s.value) === 1)
+      .map((s) => s.key.replace('include_class_', 'Class ').toUpperCase())
+
+    const msgs: string[] = []
+    if (!rows.length) {
+      msgs.push(`ไม่มีข้อมูลสต็อกของวันที่ ${snapshotDate} — อัปโหลดไฟล์ POWER_BI ก่อน`)
+    } else {
+      msgs.push('สต็อกที่มี: ' + Object.entries(byClass).map(([k, v]) => `${k} ${v}`).join(' · '))
+      if (byClass['ไม่มีคลาส']) {
+        msgs.push(`มี ${byClass['ไม่มีคลาส']} แถวที่ไม่มีคลาส — เป็นข้อมูลเก่าก่อนอัปเดตระบบ ให้อัปโหลดไฟล์ POWER_BI ใหม่อีกครั้ง`)
+      }
+    }
+    if (!trips.count) {
+      msgs.push(`ไม่มีแผนเที่ยวรถของวันที่ ${tripDate} — อัปโหลดไฟล์เที่ยวรถ โดยตั้งวันที่ให้ตรงกัน`)
+    } else {
+      msgs.push(`สาขาที่รถเข้าวันนี้: ${trips.count} แห่ง`)
+    }
+    msgs.push('คลาสที่เปิดให้คำนวณ: ' + (on.length ? on.join(', ') : 'ไม่ได้เปิดเลย — ตั้งค่าที่หน้า KPI และค่าคำนวณ'))
+    setDiag(msgs)
   }
 
   async function adjust(line: Line, value: number) {
@@ -134,6 +173,16 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
         </div>
         {err && <div className="note bad" style={{ marginTop: 12, whiteSpace: 'pre-line' }}>{err}</div>}
       </div>
+
+      {diag && (
+        <div className="card">
+          <h3>คำนวณแล้วไม่พบรายการ</h3>
+          <p className="hint">ไม่มีบรรทัดไหนเข้าเงื่อนไขครบทั้งสามข้อ: มีสต็อก · รถเข้าวันนี้ · อยู่ในคลาสที่เปิดไว้</p>
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: 'var(--ink-2)' }}>
+            {diag.map((m, i) => <li key={i} style={{ marginBottom: 4 }}>{m}</li>)}
+          </ul>
+        </div>
+      )}
 
       {lines.length > 0 && (
         <>

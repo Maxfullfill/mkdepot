@@ -123,7 +123,8 @@ export default function Import({ snapshotDate, setSnapshotDate }: {
     const unknown = rows.filter((r) => !have.has(r.plant_code)).map((r) => r.plant_code)
 
     await upsertChunked('delivery_trips',
-      usable.map((r) => ({ ...r, batch_id: bid, trip_date: snapshotDate })), undefined, tick)
+      usable.map((r) => ({ ...r, batch_id: bid, trip_date: snapshotDate })),
+      'trip_date,plant_code', tick)
     await upsertChunked('delivery_plan',
       usable.map((r) => ({ plant_code: r.plant_code, trip_no: r.trip_no, pickup_point: r.pickup_point, trip_date: snapshotDate })),
       'trip_date,plant_code')
