@@ -6,8 +6,9 @@ import { Fold } from './ui'
 interface TLine {
   id: number; mat_code: string; from_plant: string; to_plant: string
   area: string | null; qty: number
+  tier: string | null; from_area: string | null; to_area: string | null
   from_stock: number; from_doh: number; to_stock: number; to_doh: number
-  uom: string | null; status: string
+  uom: string | null; status: string; match_level: string | null
   from_name?: string; to_name?: string; item_name?: string
 }
 interface Hot {
@@ -90,12 +91,16 @@ export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
     qty: active.reduce((s, l) => s + l.qty, 0),
     pairs: new Set(active.map((l) => `${l.from_plant}>${l.to_plant}`)).size,
     areas: new Set(active.map((l) => l.area)).size,
+    byTier: active.reduce<Record<string, number>>((a, l) => {
+      const k = l.tier ?? '—'; a[k] = (a[k] ?? 0) + l.qty; return a
+    }, {}),
   }), [active])
 
   function exportTransfers() {
     if (!active.length) return
     const ws = XLSX.utils.json_to_sheet(active.map((l) => ({
-      'ผจก.เขต': l.area,
+      'ระยะ': l.tier,
+      'กลุ่ม': l.area,
       'สาขาต้นทาง': l.from_name,
       'รหัสต้นทาง': l.from_plant,
       'DOH ต้นทาง': l.from_doh,
@@ -148,13 +153,14 @@ export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
       <p className="lede">
         เอาของเกินจากสาขาหนึ่งไปอุดสาขาที่ขาด แทนการเบิกใหม่จากคลัง
         ของในเครือข่ายไม่เพิ่ม DOH จึงค่อย ๆ ลงตามยอดขาย ·
-        เขต = สาขาที่อยู่ใต้ผู้จัดการเขตคนเดียวกัน · เฉพาะ Class A ไม่รวมหัวเชื้อ
+        จับคู่ไล่จากใกล้ไปไกล อำเภอ → จังหวัด → เขตผู้จัดการ → ข้ามเขต ·
+        เฉพาะ Class A ไม่รวมหัวเชื้อ
       </p>
 
       <div className="card">
         <div className="row">
           <button className="btn" onClick={run} disabled={busy}>
-            {busy ? 'กำลังคำนวณ…' : 'คำนวณรายการโอนภายในเขตผู้จัดการ'}
+            {busy ? 'กำลังคำนวณ…' : 'คำนวณรายการโอน'}
           </button>
           <span style={{ fontSize: 12.5, color: 'var(--ink-3)' }}>ใช้สต็อก ณ {snapshotDate}</span>
           {active.length > 0 && (
@@ -179,14 +185,18 @@ export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
             <div className="stat"><dt>รายการโอน</dt><dd>{active.length}</dd></div>
             <div className="stat"><dt>รวมจำนวน</dt><dd>{summary.qty.toLocaleString()} <small>ชิ้น</small></dd></div>
             <div className="stat"><dt>คู่สาขา</dt><dd>{summary.pairs}</dd></div>
-            <div className="stat"><dt>ผจก.เขตที่เกี่ยวข้อง</dt><dd>{summary.areas}</dd></div>
+            <div className="stat"><dt>กลุ่มที่เกี่ยวข้อง</dt><dd>{summary.areas}</dd></div>
           </dl>
+
+          <div className="note" style={{ marginBottom: 12 }}>
+            แยกตามระยะ: {Object.entries(summary.byTier).map(([k, v]) => `${k} ${v} ชิ้น`).join(' · ')}
+          </div>
 
           <div className="tw" style={{ marginBottom: 20 }}>
             <table>
               <thead>
                 <tr>
-                  <th>ผจก.เขต</th><th>สินค้า</th>
+                  <th>ระยะ</th><th>กลุ่ม</th><th>สินค้า</th>
                   <th>ต้นทาง</th><th className="num">DOH</th>
                   <th>ปลายทาง</th><th className="num">DOH</th>
                   <th className="num">โอน</th><th></th>
@@ -195,7 +205,12 @@ export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
               <tbody>
                 {lines.map((l) => (
                   <tr key={l.id} style={{ opacity: l.status === 'ยกเลิก' ? 0.4 : 1 }}>
-                    <td><span className="tag">{l.area}</span></td>
+                    <td>
+                      <span className={`tag ${l.tier === 'อำเภอ' ? 'ok' : l.tier === 'จังหวัด' ? '' : 'oil'}`}>
+                        {l.tier ?? '—'}
+                      </span>
+                    </td>
+                    <td style={{ color: 'var(--ink-2)', fontSize: 12.5 }}>{l.area}</td>
                     <td>{l.item_name}</td>
                     <td>{l.from_name}</td>
                     <td className="num" style={{ color: 'var(--oil)' }}>{l.from_doh}</td>
@@ -218,8 +233,8 @@ export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
         </>
       )}
 
-      <Fold title="จับคู่ข้ามเขต" note={`${crossPairs.length} คู่ที่เป็นไปได้`}
-        hint="SKU ที่เขตหนึ่งกองอยู่ แต่อีกเขตยังมีที่ว่างหรือมีสาขาขาด — ใช้ตัดสินใจโอนข้ามเขตเอง">
+      <Fold title="จับคู่ข้ามจังหวัด" note={`${crossPairs.length} คู่ที่เป็นไปได้`}
+        hint="SKU ที่จังหวัดหนึ่งกองอยู่ แต่อีกจังหวัดมีสาขาขาด — ใช้ตัดสินใจโอนข้ามจังหวัดเอง">
         {crossPairs.length === 0 ? (
           <div className="note">ไม่มีคู่ข้ามเขตที่ชัดเจน</div>
         ) : (
@@ -228,8 +243,8 @@ export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
               <thead>
                 <tr>
                   <th>สินค้า</th>
-                  <th>เขตต้นทาง (ผจก.)</th><th className="num">DOH</th><th className="num">ของเกิน</th>
-                  <th>เขตปลายทาง (ผจก.)</th><th className="num">DOH</th><th className="num">สาขาขาด</th>
+                  <th>จังหวัดต้นทาง</th><th className="num">DOH</th><th className="num">ของเกิน</th>
+                  <th>จังหวัดปลายทาง</th><th className="num">DOH</th><th className="num">สาขาขาด</th>
                   <th className="num">โอนได้</th>
                 </tr>
               </thead>
