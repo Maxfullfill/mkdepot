@@ -233,17 +233,27 @@ export function parseME2N(grid: Grid): ParseResult<TransitRow> {
   return { rows: [...agg.values()], skipped, warnings: [] }
 }
 
-/* 4. WMS — สต็อกคลัง รูปแบบไฟล์ยังไม่นิ่ง จึงเดาคอลัมน์แบบยืดหยุ่น */
+/* ────────────────────────────────────────────────────────────────────
+   4. WMS — สต็อกคลัง
+   รูปแบบใหม่ (ส.ค. 69): Item | Description | On Hand
+   รองรับหัวตารางแบบเก่าไว้ด้วย เผื่อไฟล์เดิมยังใช้อยู่
+                                                                      */
 
 export interface DepotRow { mat_code: string; qty_pcs: number }
 
 export function parseWMS(grid: Grid): ParseResult<DepotRow> {
   let h: number
-  try { h = findHeader(grid, ['Material']) }
-  catch { h = findHeader(grid, ['รหัสสินค้า']) }
+  try { h = findHeader(grid, ['Item', 'On Hand']) }
+  catch {
+    try { h = findHeader(grid, ['Material']) }
+    catch { h = findHeader(grid, ['รหัสสินค้า']) }
+  }
   const c = indexer(grid[h])
-  const mi = need(c('Material', 'รหัสสินค้า', 'MATERIAL CODE'), 'Material / รหัสสินค้า')
-  const qi = need(c('Qty', 'จำนวน', 'Unrestricted', 'คงเหลือ', 'Stock'), 'จำนวน / Qty')
+  const mi = need(c('Item', 'Material', 'รหัสสินค้า', 'MATERIAL CODE'), 'Item / Material')
+  const qi = need(
+    c('On Hand', 'OnHand', 'Qty', 'จำนวน', 'Unrestricted', 'คงเหลือ', 'Stock'),
+    'On Hand / จำนวน'
+  )
 
   const agg = new Map<string, number>()
   let skipped = 0
@@ -253,12 +263,17 @@ export function parseWMS(grid: Grid): ParseResult<DepotRow> {
     if (!/^\d{6,}$/.test(mat)) { skipped++; continue }
     agg.set(mat, (agg.get(mat) ?? 0) + num(row[qi]))
   }
-  return {
-    rows: [...agg].map(([mat_code, qty_pcs]) => ({ mat_code, qty_pcs })),
-    skipped,
-    warnings: agg.size === 0 ? ['อ่านไฟล์ WMS ไม่ได้สักแถว — ตรวจว่าเลือกชีตถูกไหม'] : [],
+
+  const rows = [...agg].map(([mat_code, qty_pcs]) => ({ mat_code, qty_pcs }))
+  const warnings: string[] = []
+  if (!rows.length) warnings.push('อ่านไฟล์ WMS ไม่ได้สักแถว — ตรวจว่าเลือกชีตถูกไหม')
+  else {
+    const zero = rows.filter((r) => r.qty_pcs <= 0).length
+    if (zero) warnings.push(`${zero} SKU ของหมดในคลัง — ระบบจะไม่สั่งตัวเหล่านี้`)
   }
+  return { rows, skipped, warnings }
 }
+
 
 /* ────────────────────────────────────────────────────────────────────
    5. Datastation2 — master สถานีทั้งประเทศ
