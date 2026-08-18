@@ -10,6 +10,10 @@ interface Line {
   uom: string | null; doh_before: number | null; doh_after: number | null
   priority: number; flag: string | null
   branch_name?: string; item_desc?: string
+  /** ไม่ใส่ในเทมเพลตหลัก — แยกไปการ์ดต่างหาก */
+  off_template?: boolean
+  is_booster?: boolean
+  units_per_case?: number
 }
 
 interface OffT {
@@ -100,15 +104,24 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
   async function load(id: string) {
     const { data, error } = await supabase
       .from('calc_lines')
-      .select('*, stations(branch_name), items(desc_en)')
+      .select('*, stations(branch_name), items(desc_en, template_descr, exclude_from_template, is_booster, units_per_case)')
       .eq('run_id', id)
       .order('priority').order('plant_code')
     if (error) { setErr(error.message); return 0 }
-    const rows = (data ?? []).map((r: Record<string, unknown>) => ({
-      ...(r as unknown as Line),
-      branch_name: (r.stations as { branch_name: string } | null)?.branch_name,
-      item_desc: (r.items as { desc_en: string } | null)?.desc_en,
-    }))
+    const rows = (data ?? []).map((r: Record<string, unknown>) => {
+      const it = r.items as {
+        desc_en: string; template_descr: string | null
+        exclude_from_template: boolean; is_booster: boolean; units_per_case: number
+      } | null
+      return {
+        ...(r as unknown as Line),
+        branch_name: (r.stations as { branch_name: string } | null)?.branch_name,
+        item_desc: it?.template_descr ?? it?.desc_en,
+        off_template: it?.exclude_from_template ?? false,
+        is_booster: it?.is_booster ?? false,
+        units_per_case: it?.units_per_case ?? 1,
+      }
+    })
     setLines(rows)
     return rows.length
   }
@@ -155,19 +168,28 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
     await supabase.from('calc_lines').update({ manual_add: add }).eq('id', line.id)
   }
 
+  /** รายการที่เข้าเทมเพลตหลัก — ตัดสินค้าที่ต้องสั่งแยกออก */
+  const mainLines = useMemo(() => lines.filter((l) => !l.off_template), [lines])
+
   const shown = useMemo(
-    () => only === 'order' ? lines.filter((l) => l.final_pcs > 0) : lines,
-    [lines, only]
+    () => only === 'order' ? mainLines.filter((l) => l.final_pcs > 0) : mainLines,
+    [mainLines, only]
+  )
+
+  /** เตือนถ้ายังไม่ได้อัป Master Item ใหม่ — จำนวนต่อลังจะเป็น 1 หมด */
+  const caseWarning = useMemo(
+    () => lines.some((l) => l.is_booster && (l.units_per_case ?? 1) <= 1),
+    [lines]
   )
 
   const stats = useMemo(() => {
-    const ordered = lines.filter((l) => l.final_pcs > 0)
+    const ordered = mainLines.filter((l) => l.final_pcs > 0)
     return {
-      lines: lines.length,
+      lines: mainLines.length,
       stations: new Set(ordered.map((l) => l.plant_code)).size,
       pieces: ordered.reduce((s, l) => s + l.final_pcs, 0),
     }
-  }, [lines])
+  }, [mainLines])
 
   /** ออกไฟล์ตามเทมเพลต 25 คอลัมน์ที่ใช้กับระบบจริง */
   async function exportTemplate() {
@@ -387,6 +409,13 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
             </div>
           )}
 
+          {caseWarning && (
+            <div className="note bad" style={{ marginBottom: 14 }}>
+              หัวเชื้อยังมีจำนวนต่อลังเป็น 1 — แปลว่ายังไม่ได้อัปโหลดไฟล์ Master Item ใหม่
+              ระบบจึงยังไม่ปัดเป็นลังเต็ม 24 ให้ · อัปไฟล์ Master Item แล้วคำนวณใหม่อีกครั้ง
+            </div>
+          )}
+
           {offT.length > 0 && (
             <div className="card" style={{ marginBottom: 14 }}>
               <div className="spread">
@@ -529,7 +558,9 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
             </table>
           </div>
           <p className="hint" style={{ marginTop: 8 }}>
-            แถบวัดยาวตามจำนวนวันที่ของจะอยู่ได้ ขีดดำคือเส้น KPI 25 วัน — แดงคือต่ำกว่า 7 วัน เหลืองคือเกินเส้น
+            แถบวัดยาวตามจำนวนวันที่ของจะอยู่ได้ ขีดดำคือเส้น KPI — แดงคือต่ำกว่า 7 วัน เหลืองคือเกินเส้น
+            {lines.length > mainLines.length &&
+              ` · ตารางนี้ไม่รวมสินค้าที่ต้องสั่งแยก ${lines.length - mainLines.length} บรรทัด ดูที่การ์ดด้านบน`}
           </p>
         </>
       )}
