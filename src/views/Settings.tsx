@@ -12,7 +12,12 @@ interface Cover {
 }
 interface Unmapped { alias_code: string; sample_name: string | null; last_seen: string }
 interface Alias { alias_code: string; plant_code: string; branch_name: string }
-interface Station { plant_code: string; branch_name: string }
+interface Station { plant_code: string; branch_name: string; shipto_name: string | null }
+interface Item {
+  mat_code: string; desc_th: string | null; desc_en: string | null
+  template_descr: string | null; uom: string | null; units_per_case: number
+  is_booster: boolean; exclude_from_template: boolean
+}
 
 /** ค่าที่มีหน้าตาเฉพาะ ไม่ต้องแสดงซ้ำในตารางรวม */
 const OWN_UI = [
@@ -29,24 +34,31 @@ export default function Settings() {
   const [unmapped, setUnmapped] = useState<Unmapped[]>([])
   const [alias, setAlias] = useState<Alias[]>([])
   const [stations, setStations] = useState<Station[]>([])
+  const [items, setItems] = useState<Item[]>([])
   const [q, setQ] = useState('')
+  const [qi, setQi] = useState('')
   const [msg, setMsg] = useState('')
 
   useEffect(() => { void refresh() }, [])
 
   async function refresh() {
-    const [s, c, u, a, st] = await Promise.all([
+    const [s, c, u, a, st, it] = await Promise.all([
       supabase.from('settings').select('*').order('key'),
       supabase.from('v_cover_preview').select('*').order('branch_name'),
       supabase.from('unmapped_codes').select('*').order('last_seen', { ascending: false }),
       supabase.from('v_alias_map').select('*'),
-      supabase.from('stations').select('plant_code, branch_name').eq('is_active', true).order('branch_name'),
+      supabase.from('stations').select('plant_code, branch_name, shipto_name')
+        .eq('is_active', true).order('branch_name'),
+      supabase.from('items')
+        .select('mat_code, desc_th, desc_en, template_descr, uom, units_per_case, is_booster, exclude_from_template')
+        .eq('is_active', true).order('mat_code'),
     ])
     setSettings((s.data ?? []) as Setting[])
     setCover((c.data ?? []) as Cover[])
     setUnmapped((u.data ?? []) as Unmapped[])
     setAlias((a.data ?? []) as Alias[])
     setStations((st.data ?? []) as Station[])
+    setItems((it.data ?? []) as Item[])
   }
 
   async function reloadCover() {
@@ -87,6 +99,18 @@ export default function Settings() {
     await supabase.from('station_alias').delete().eq('alias_code', code)
     await refresh()
     flash(`ยกเลิก ${code} แล้ว`)
+  }
+
+  async function saveStation(plant: string, patch: Partial<Station>) {
+    setStations((p) => p.map((x) => (x.plant_code === plant ? { ...x, ...patch } : x)))
+    const { error } = await supabase.from('stations').update(patch).eq('plant_code', plant)
+    flash(error ? `บันทึกไม่สำเร็จ: ${error.message}` : 'บันทึกแล้ว')
+  }
+
+  async function saveItem(mat: string, patch: Partial<Item>) {
+    setItems((p) => p.map((x) => (x.mat_code === mat ? { ...x, ...patch } : x)))
+    const { error } = await supabase.from('items').update(patch).eq('mat_code', mat)
+    flash(error ? `บันทึกไม่สำเร็จ: ${error.message}` : 'บันทึกแล้ว')
   }
 
   const mode = get('cover_mode')
@@ -324,6 +348,83 @@ export default function Settings() {
             </div>
           </>
         )}
+      </Fold>
+
+      <Fold title="สินค้า — ชื่อในเทมเพลต หัวเชื้อ และการสั่งแยก"
+        note={`หัวเชื้อ ${items.filter((i) => i.is_booster).length} · สั่งแยก ${items.filter((i) => i.exclude_from_template).length}`}
+        hint="หัวเชื้อ = นับ KPI แยก ต้องมีครบทุกสาขา · สั่งแยก = ไม่ใส่ในไฟล์ export แต่ยังคำนวณและเตือนให้">
+        <div className="row" style={{ marginBottom: 10 }}>
+          <input type="text" placeholder="ค้นหาสินค้า" value={qi}
+            onChange={(e) => setQi(e.target.value)} style={{ width: 220 }} />
+        </div>
+        <div className="tw" style={{ maxHeight: '48vh' }}>
+          <table>
+            <thead>
+              <tr>
+                <th>รหัส</th><th>ชื่อในเทมเพลต</th><th className="num">หน่วย</th>
+                <th className="num">ต่อลัง</th><th>หัวเชื้อ</th><th>สั่งแยก</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.filter((i) => {
+                const t = qi.trim().toLowerCase()
+                return !t || i.mat_code.includes(t) ||
+                  `${i.template_descr ?? ''} ${i.desc_th ?? ''} ${i.desc_en ?? ''}`.toLowerCase().includes(t)
+              }).map((i) => (
+                <tr key={i.mat_code}>
+                  <td style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>{i.mat_code}</td>
+                  <td>
+                    <input type="text" style={{ width: 300, fontSize: 12.5, padding: '4px 7px' }}
+                      defaultValue={i.template_descr ?? ''}
+                      onBlur={(e) => {
+                        if (e.target.value !== (i.template_descr ?? ''))
+                          void saveItem(i.mat_code, { template_descr: e.target.value })
+                      }} />
+                  </td>
+                  <td className="num">{i.uom ?? '—'}</td>
+                  <td className="num" style={{ color: i.units_per_case > 1 ? 'var(--oil)' : 'var(--ink-3)' }}>
+                    {i.units_per_case}
+                  </td>
+                  <td><Switch on={i.is_booster}
+                    onChange={(v) => saveItem(i.mat_code, { is_booster: v })} /></td>
+                  <td><Switch on={i.exclude_from_template}
+                    onChange={(v) => saveItem(i.mat_code, { exclude_from_template: v })} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Fold>
+
+      <Fold title="ชื่อ Shipto รายสาขา"
+        note={`${stations.filter((s) => s.shipto_name).length} / ${stations.length} มีชื่อ`}
+        hint="ชื่อที่ใช้ในเทมเพลต ตั้งต้นจาก Datastation2 · แก้ได้ถ้าไม่ตรงกับที่ระบบจริงต้องการ">
+        <div className="tw" style={{ maxHeight: '44vh' }}>
+          <table>
+            <thead><tr><th>สาขา</th><th>ชื่อในเทมเพลต</th></tr></thead>
+            <tbody>
+              {stations.map((s) => (
+                <tr key={s.plant_code}>
+                  <td style={{ width: 260 }}>
+                    {s.branch_name}
+                    <span style={{ color: 'var(--ink-3)', fontFamily: 'var(--mono)', fontSize: 11.5 }}>
+                      {' '}{s.plant_code}
+                    </span>
+                  </td>
+                  <td>
+                    <input type="text" style={{ width: 320, fontSize: 12.5, padding: '4px 7px' }}
+                      placeholder="ยังไม่มี — อัปไฟล์ Datastation2"
+                      defaultValue={s.shipto_name ?? ''}
+                      onBlur={(e) => {
+                        if (e.target.value !== (s.shipto_name ?? ''))
+                          void saveStation(s.plant_code, { shipto_name: e.target.value || null })
+                      }} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </Fold>
 
       <Fold title="ค่าอื่น" note={`${settings.filter((s) => !OWN_UI.includes(s.key)).length} รายการ`}>
