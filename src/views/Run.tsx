@@ -12,6 +12,12 @@ interface Line {
   branch_name?: string; item_desc?: string
 }
 
+interface OffT {
+  mat_code: string; item_descr: string
+  stations_total: number; in_stock: number; short: number; no_record: number
+  coverage_pct: number; order_lines: number; order_qty: number
+}
+
 interface Kpi {
   total_lines: number; in_stock_before: number
   short_total: number; short_on_trip: number; short_off_trip: number
@@ -20,6 +26,13 @@ interface Kpi {
   doh_before: number; doh_after: number
   over_doh_lines: number; excess_liters: number
   dead_lines: number; dead_liters: number
+}
+
+interface OffAlert {
+  mat_code: string; item_descr: string
+  stations_total: number; in_stock: number
+  short_total: number; short_on_trip: number
+  order_lines: number; order_qty: number; uom: string | null
 }
 
 const PRIORITY = {
@@ -52,12 +65,14 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
   const [err, setErr] = useState('')
   const [diag, setDiag] = useState<string[] | null>(null)
   const [kpi, setKpi] = useState<Kpi | null>(null)
+  const [offT, setOffT] = useState<OffT[]>([])
+  const [off, setOff] = useState<OffAlert[]>([])
   const [only, setOnly] = useState<'order' | 'all'>('order')
 
   useEffect(() => setTripDate(snapshotDate), [snapshotDate])
 
   async function calculate() {
-    setBusy(true); setErr(''); setLines([]); setRunId(null); setDiag(null); setKpi(null)
+    setBusy(true); setErr(''); setLines([]); setRunId(null); setDiag(null); setKpi(null); setOffT([]); setOff([])
     try {
       const { data, error } = await supabase.rpc('calculate_replenishment', {
         p_trip_date: tripDate,
@@ -70,8 +85,12 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
       if (n === 0) await explainEmpty()
       else {
         // KPI ต้องนับทั้งพอร์ต ไม่ใช่เฉพาะสาขาที่รถเข้ารอบนี้
-        const { data: k } = await supabase.rpc('kpi_for_run', { p_run_id: data })
+        const [{ data: k }, { data: o }] = await Promise.all([
+          supabase.rpc('kpi_for_run', { p_run_id: data }),
+          supabase.rpc('offtemplate_alert', { p_run_id: data }),
+        ])
         if (Array.isArray(k) && k.length) setKpi(k[0] as Kpi)
+        setOff((o ?? []) as OffAlert[])
       }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
@@ -150,22 +169,92 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
     }
   }, [lines])
 
-  function exportTemplate() {
-    const rows = lines.filter((l) => l.final_pcs > 0).map((l) => ({
-      'Plant': l.plant_code,
-      'สาขา': l.branch_name ?? '',
-      '*ITEM': l.mat_code,
-      'Item Descr': l.item_desc ?? '',
-      'QTY(TransferUOM)': l.final_pcs,
-      'UOM': l.uom ?? '',
-      'SchedShipDate': tripDate,
-      'หมายเหตุ': l.flag ?? '',
-    }))
-    const ws = XLSX.utils.json_to_sheet(rows)
+  /** ออกไฟล์ตามเทมเพลต 25 คอลัมน์ที่ใช้กับระบบจริง */
+  async function exportTemplate() {
+    if (!runId) return
+    setBusy(true)
+    try {
+      const [{ data: rows, error }, { data: cfgRows }] = await Promise.all([
+        supabase.from('v_order_template').select('*').eq('run_id', runId)
+          .order('po_group').order('mat_code'),
+        supabase.from('template_config').select('key, value'),
+      ])
+      if (error) throw new Error(error.message)
+      if (!rows?.length) { setErr('ไม่มีรายการที่ต้องส่ง'); return }
+
+      const cfg = Object.fromEntries((cfgRows ?? []).map((c) => [c.key, c.value]))
+
+      // วันที่รูปแบบ 17.08.2026 — วันและเดือนสองหลักเสมอ
+      const [yy, mm, dd] = tripDate.split('-')
+      const d = `${dd.padStart(2, '0')}.${mm.padStart(2, '0')}.${yy}`
+
+      // PO GROUP เริ่มนับ 1 ใหม่ทุกครั้ง เรียงตามสาขา
+      const groups = new Map<string, number>()
+      const out = rows.map((r) => {
+        if (!groups.has(r.plant_code)) groups.set(r.plant_code, groups.size + 1)
+        return {
+          'UDC_POTYPE': cfg['UDC_POTYPE'] ?? 'ZIN3',
+          'UDC_Vendor_Code': cfg['UDC_Vendor_Code'] ?? 'Z1101',
+          'Descr': cfg['Descr'] ?? '',
+          'Pur org': cfg['Pur org'] ?? '1000',
+          'Pur group': cfg['Pur group'] ?? '140',
+          'Currency': cfg['Currency'] ?? 'THB',
+          '*PO GROUP': groups.get(r.plant_code),
+          'Multi Group': '',
+          'Sequence No.': cfg['Sequence No.'] ?? '1',
+          '': r.plant_code,
+          ' ': r.shipto_name,
+          '*ITEM': r.mat_code,
+          'Item Descr': r.item_descr,
+          'QTY(TransferUOM)': r.qty,
+          'UOM': r.uom,
+          'UDC_FREEMARK': '',
+          'SchedShipDate': d,
+          'SCHEDARRIVDATE': d,
+          'UDC_STORLOC': cfg['UDC_STORLOC'] ?? '4001',
+          'UDC_TAXCODE': cfg['UDC_TAXCODE'] ?? 'V7',
+          'UDC_VALUTYPE': '',
+          'UDC_SHIPPOINT': '',
+          'UDC_TRUCKSIZE': '',
+          '*Shipto': '',
+          'UDC_SEPARATE': '',
+        }
+      })
+
+      const ws = XLSX.utils.json_to_sheet(out)
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, 'template')
+      XLSX.writeFile(wb, `PO_${tripDate.replace(/-/g, '')}.xlsx`)
+      await supabase.from('calc_runs')
+        .update({ exported_at: new Date().toISOString() }).eq('run_id', runId)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally { setBusy(false) }
+  }
+
+  /** สินค้าที่ใช้เทมเพลตคนละแบบ ออกเป็นไฟล์ต่างหาก */
+  async function exportOffTemplate() {
+    if (!runId) return
+    const { data, error } = await supabase.from('v_offtemplate_lines')
+      .select('*').eq('run_id', runId).order('branch_name')
+    if (error) { setErr(error.message); return }
+    if (!data?.length) return
+    const [yy, mm, dd] = tripDate.split('-')
+    const d = `${dd.padStart(2, '0')}.${mm.padStart(2, '0')}.${yy}`
+    const ws = XLSX.utils.json_to_sheet(data.map((r) => ({
+      'วันที่ส่ง': d,
+      'PlantCode': r.plant_code,
+      'สาขา': r.branch_name,
+      'รหัสสินค้า': r.mat_code,
+      'สินค้า': r.item_descr,
+      'คงเหลือ': r.on_hand_pcs,
+      'ระหว่างทาง': r.in_transit_pcs,
+      'จำนวนที่ต้องสั่ง': r.qty,
+      'หน่วย': r.uom,
+    })))
     const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'PO')
-    XLSX.writeFile(wb, `PO_${tripDate.replace(/-/g, '')}.xlsx`)
-    if (runId) supabase.from('calc_runs').update({ exported_at: new Date().toISOString() }).eq('run_id', runId)
+    XLSX.utils.book_append_sheet(wb, ws, 'สั่งแยก')
+    XLSX.writeFile(wb, `สั่งแยก_${tripDate.replace(/-/g, '')}.xlsx`)
   }
 
   return (
@@ -243,6 +332,112 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
               {' '}(รอบนี้แก้ได้ {kpi.fixed_here}
               {kpi.short_off_trip > 0 && <>, อีก {kpi.short_off_trip} อยู่ในสาขาที่รถไม่ได้เข้า ต้องรอรอบหน้า</>})
               {kpi.avail_after < 97 && <> — ยังไม่ถึงเป้า 97%</>}
+            </div>
+          )}
+
+          {off.length > 0 && (
+            <div className="card" style={{ marginBottom: 14, borderColor: 'var(--oil)' }}>
+              <div className="spread">
+                <div>
+                  <h3>ต้องสั่งแยก — ใช้เทมเพลตนี้ไม่ได้</h3>
+                  <p className="hint">
+                    ไม่รวมอยู่ในไฟล์เทมเพลตหลัก ต้องสั่งด้วยรูปแบบอื่นต่างหาก
+                    · นับของขาดจากทุกสาขาที่ดูแล ไม่ใช่เฉพาะรอบนี้
+                  </p>
+                </div>
+                <button className="btn ghost" onClick={() => void exportOffTemplate()}>
+                  ดาวน์โหลดรายการ
+                </button>
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>สินค้า</th><th className="num">มีของ</th>
+                    <th className="num">ขาด</th><th className="num">ขาดในสาขาที่รถเข้า</th>
+                    <th className="num">รอบนี้ต้องสั่ง</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {off.map((o) => (
+                    <tr key={o.mat_code}>
+                      <td>{o.item_descr}</td>
+                      <td className="num">{o.in_stock} / {o.stations_total}</td>
+                      <td className="num" style={{
+                        color: o.short_total ? 'var(--alarm)' : undefined, fontWeight: 600,
+                      }}>
+                        {o.short_total}
+                      </td>
+                      <td className="num" style={{ color: 'var(--ink-3)' }}>{o.short_on_trip}</td>
+                      <td className="num">
+                        {o.order_qty ? `${o.order_qty.toLocaleString()} ${o.uom ?? ''}` : '—'}
+                        {o.order_lines ? (
+                          <span style={{ color: 'var(--ink-3)' }}> · {o.order_lines} สาขา</span>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {off.some((o) => o.short_total > 0) && (
+                <div className="note bad" style={{ marginTop: 12 }}>
+                  ของขาดรวม {off.reduce((s, o) => s + o.short_total, 0)} สาขา —
+                  อย่าลืมสั่งแยก ไม่งั้นจะขาดต่อไปเพราะไม่ได้อยู่ในไฟล์เทมเพลต
+                </div>
+              )}
+            </div>
+          )}
+
+          {offT.length > 0 && (
+            <div className="card" style={{ marginBottom: 14 }}>
+              <div className="spread">
+                <div>
+                  <h3>ต้องสั่งแยก ไม่อยู่ในเทมเพลตนี้</h3>
+                  <p className="hint">
+                    สินค้ากลุ่มนี้ใช้เทมเพลตคนละแบบ ไม่ถูกใส่ในไฟล์ export ปกติ
+                    ต้องสั่งด้วยวิธีอื่น แต่ยังนับใน KPI ตามเดิม
+                  </p>
+                </div>
+                {offT.some((o) => o.order_qty > 0) && (
+                  <button className="btn ghost" onClick={() => void exportOffTemplate()}>
+                    ดาวน์โหลดรายการ
+                  </button>
+                )}
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>สินค้า</th><th className="num">มีของ</th><th className="num">ขาด</th>
+                    <th className="num">ครบ</th><th className="num">รอบนี้ต้องสั่ง</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {offT.map((o) => (
+                    <tr key={o.mat_code}>
+                      <td>{o.item_descr}</td>
+                      <td className="num">{o.in_stock} / {o.stations_total}</td>
+                      <td className="num" style={{ color: o.short ? 'var(--alarm)' : undefined }}>
+                        {o.short}
+                      </td>
+                      <td className="num" style={{
+                        color: o.coverage_pct >= 100 ? 'var(--ok)' : 'var(--alarm)', fontWeight: 600,
+                      }}>
+                        {o.coverage_pct?.toFixed(1)}%
+                      </td>
+                      <td className="num">
+                        {o.order_qty ? `${o.order_qty} ชิ้น / ${o.order_lines} สาขา` : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {offT.some((o) => o.short > 0) ? (
+                <div className="note bad" style={{ marginTop: 12 }}>
+                  ของขาดรวม {offT.reduce((s, o) => s + o.short, 0)} สาขา —
+                  ต้องสั่งแยกนอกเทมเพลตนี้ อย่าลืมทำ ไม่งั้นจะสะสมไปรอบหน้า
+                </div>
+              ) : (
+                <div className="note good" style={{ marginTop: 12 }}>มีของครบทุกสาขา</div>
+              )}
             </div>
           )}
 
