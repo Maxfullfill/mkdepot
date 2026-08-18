@@ -6,11 +6,12 @@ import Import from './views/Import'
 import Run from './views/Run'
 import KpiPage from './views/Kpi'
 import Settings from './views/Settings'
+import Transfers from './views/Transfers'
 import Users from './views/Users'
 
 const today = () => new Date().toISOString().slice(0, 10)
 
-type Tab = 'import' | 'run' | 'kpi' | 'settings' | 'users'
+type Tab = 'import' | 'run' | 'transfer' | 'kpi' | 'settings' | 'users'
 
 interface Me { username: string; role: 'staff' | 'admin'; is_active: boolean }
 
@@ -59,9 +60,10 @@ export default function App() {
   const tabs: { id: Tab; step: string; label: string }[] = [
     { id: 'import', step: '01', label: 'นำเข้าข้อมูล' },
     { id: 'run', step: '02', label: 'คำนวณยอดเติม' },
-    { id: 'kpi', step: '03', label: 'KPI' },
-    { id: 'settings', step: '04', label: 'ตั้งค่าการคำนวณ' },
-    ...(me.role === 'admin' ? [{ id: 'users' as Tab, step: '05', label: 'ผู้ใช้' }] : []),
+    { id: 'transfer', step: '03', label: 'โอนเกลี่ยสินค้า' },
+    { id: 'kpi', step: '04', label: 'KPI' },
+    { id: 'settings', step: '05', label: 'ตั้งค่าการคำนวณ' },
+    ...(me.role === 'admin' ? [{ id: 'users' as Tab, step: '06', label: 'ผู้ใช้' }] : []),
   ]
 
   return (
@@ -91,6 +93,7 @@ export default function App() {
       <main className="main">
         {tab === 'import' && <Import snapshotDate={snapshotDate} setSnapshotDate={setSnapshotDate} />}
         {tab === 'run' && <Run snapshotDate={snapshotDate} />}
+        {tab === 'transfer' && <Transfers snapshotDate={snapshotDate} />}
         {tab === 'kpi' && <KpiPage />}
         {tab === 'settings' && <Settings />}
         {tab === 'users' && me.role === 'admin' && <Users me={me.username} />}
