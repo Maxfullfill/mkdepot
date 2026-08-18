@@ -154,7 +154,12 @@ export function parsePowerBI(grid: Grid) {
 export interface ItemRow {
   mat_code: string; desc_en: string | null; desc_th: string | null
   litre_per_piece: number; pack_size: number | null
-  uom: string | null; transfer_uom: string | null
+  /** BT / GAL — จากคอลัมน์ UOM ไม่ใช่ 'หน่วยโอน' ซึ่งเป็นจำนวนต่อลัง */
+  uom: string | null
+  /** จำนวนชิ้นต่อลัง จากคอลัมน์ 'หน่วยโอน' — >1 คือต้องสั่งยกลัง */
+  units_per_case: number
+  is_booster: boolean
+  template_descr: string | null
 }
 
 export function parseMasterItem(grid: Grid): ParseResult<ItemRow> {
@@ -164,7 +169,7 @@ export function parseMasterItem(grid: Grid): ParseResult<ItemRow> {
     mat: need(c('MATERIAL CODE'), 'MATERIAL CODE'),
     en: c('DESC'), th: c('DESC (TH)'),
     litre: need(c('LITRE'), 'LITRE'),
-    pack: c('PACK SIZE'), uom: c('UOM'), tuom: c('หน่วยโอน'),
+    pack: c('PACK SIZE'), uom: c('UOM'), perCase: c('หน่วยโอน'),
   }
   const out = new Map<string, ItemRow>()
   const warnings: string[] = []
@@ -176,14 +181,20 @@ export function parseMasterItem(grid: Grid): ParseResult<ItemRow> {
     if (!/^\d{6,}$/.test(mat)) { skipped++; continue }
     const litre = num(row[i.litre])
     if (litre <= 0) { warnings.push(`SKU ${mat} ไม่มีค่า LITRE — ข้ามไป เพราะสูตรหารด้วยค่านี้`); skipped++; continue }
+    const en = String(row[i.en] ?? '').trim() || null
+    const th = String(row[i.th] ?? '').trim() || null
+    const perCase = i.perCase >= 0 ? num(row[i.perCase]) : 1
+
     out.set(mat, {
       mat_code: mat,
-      desc_en: String(row[i.en] ?? '').trim() || null,
-      desc_th: String(row[i.th] ?? '').trim() || null,
+      desc_en: en,
+      desc_th: th,
       litre_per_piece: litre,
       pack_size: i.pack >= 0 ? num(row[i.pack]) || null : null,
       uom: i.uom >= 0 ? String(row[i.uom] ?? '').trim() || null : null,
-      transfer_uom: i.tuom >= 0 ? String(row[i.tuom] ?? '').trim() || null : null,
+      units_per_case: perCase > 0 ? perCase : 1,
+      is_booster: /booster|หัวเชื้อ/i.test(`${en ?? ''} ${th ?? ''}`),
+      template_descr: th ?? en,
     })
   }
   return { rows: [...out.values()], skipped, warnings }
@@ -256,6 +267,7 @@ export function parseWMS(grid: Grid): ParseResult<DepotRow> {
 
 export interface MasterStationRow {
   plant_code: string; site_code_1: string | null; site_code_2: string | null
+  kind: string | null; station_type: string | null
   station_name: string | null; province: string | null; area: string | null
   closed_date: string | null
 }
@@ -267,7 +279,7 @@ export function parseDatastation(grid: Grid): ParseResult<MasterStationRow> {
     plant: need(c('Plant Code'), 'Plant Code'),
     s1: c('Site Code1'), s2: need(c('Site Code2'), 'Site Code2'),
     name: c('ชื่อสถานีบริการ'), prov: c('จังหวัด'), area: c('เขตพื้นที่'),
-    closed: c('ปิดสถานี'),
+    kind: c('ชนิด'), type: c('Type'), closed: c('ปิดสถานี'),
   }
   const out = new Map<string, MasterStationRow>()
   let skipped = 0
@@ -284,10 +296,14 @@ export function parseDatastation(grid: Grid): ParseResult<MasterStationRow> {
       closed = closedRaw.slice(0, 10)
     }
 
-    out.set(plant, {
+    // สาขาหนึ่งมีได้หลายแถว แยกตามชนิด (OIL/LPG) — คีย์จึงต้องรวม site code
+    const s2 = String(row[i.s2] ?? '').trim().toUpperCase() || null
+    out.set(`${plant}|${s2 ?? ''}`, {
       plant_code: plant,
       site_code_1: i.s1 >= 0 ? String(row[i.s1] ?? '').trim() || null : null,
-      site_code_2: String(row[i.s2] ?? '').trim().toUpperCase() || null,
+      site_code_2: s2,
+      kind: i.kind >= 0 ? String(row[i.kind] ?? '').trim() || null : null,
+      station_type: i.type >= 0 ? String(row[i.type] ?? '').trim() || null : null,
       station_name: i.name >= 0 ? String(row[i.name] ?? '').trim() || null : null,
       province: i.prov >= 0 ? String(row[i.prov] ?? '').trim() || null : null,
       area: i.area >= 0 ? String(row[i.area] ?? '').trim() || null : null,
