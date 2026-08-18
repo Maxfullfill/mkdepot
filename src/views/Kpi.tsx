@@ -5,6 +5,11 @@ interface Kpi {
   snapshot_date: string; class_fix: string; active_lines: number
   in_stock_lines: number; availability_pct: number; doh_liter: number
 }
+interface Boost {
+  snapshot_date: string; mat_code: string; item_name: string
+  stations_total: number; in_stock: number; short: number
+  no_record: number; availability_pct: number
+}
 interface Budget {
   stock_liters: number; sales_per_day: number; doh_now: number
   budget_days: number; budget_liters: number; room_liters: number
@@ -14,19 +19,25 @@ export default function KpiPage() {
   const [rows, setRows] = useState<Kpi[]>([])
   const [budget, setBudget] = useState<Budget | null>(null)
   const [ceiling, setCeiling] = useState(20)
+  const [boost, setBoost] = useState<Boost[]>([])
 
   useEffect(() => { void load() }, [])
 
   async function load() {
-    const [k, b, s] = await Promise.all([
+    const [k, b, s, bo] = await Promise.all([
       supabase.from('v_kpi_daily').select('*')
         .order('snapshot_date', { ascending: false }).limit(60),
       supabase.from('v_doh_budget').select('*').maybeSingle(),
       supabase.from('settings').select('value').eq('key', 'doh_ceiling').maybeSingle(),
+      supabase.from('v_booster_kpi').select('*')
+        .order('snapshot_date', { ascending: false }).order('mat_code'),
     ])
     setRows((k.data ?? []) as Kpi[])
     setBudget((b.data as Budget) ?? null)
     if (s.data) setCeiling(Number(s.data.value))
+    const all = (bo.data ?? []) as Boost[]
+    const day = all[0]?.snapshot_date
+    setBoost(all.filter((x) => x.snapshot_date === day))
   }
 
   const classA = rows.filter((r) => r.class_fix === 'Class A')
@@ -36,7 +47,8 @@ export default function KpiPage() {
     <>
       <h2>KPI</h2>
       <p className="lede">
-        นับเฉพาะสินค้า Class A ตามคอลัมน์ Class-สาขา(3ด.Fix) จากทุกสาขาที่ดูแล
+        Availability และ DOH นับเฉพาะ Class A ไม่รวมหัวเชื้อ ·
+        หัวเชื้อมี KPI ของตัวเองแยกรายตัว ต้องมีวางครบทุกสาขา
       </p>
 
       {latest && (
@@ -67,6 +79,50 @@ export default function KpiPage() {
             </dd>
           </div>
         </dl>
+      )}
+
+      {boost.length > 0 && (
+        <div className="card">
+          <h3>KPI หัวเชื้อ — ต้องมีวางครบทุกสาขา</h3>
+          <p className="hint">
+            นับทุกสาขา × หัวเชื้อทุกตัว · ไม่นับรวมใน Availability และ DOH
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>สินค้า</th><th className="num">มีของ</th>
+                <th className="num">ขาด</th><th className="num">ไม่มีแถวในไฟล์</th>
+                <th className="num">ครบ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {boost.map((b) => (
+                <tr key={b.mat_code}>
+                  <td>{b.item_name}</td>
+                  <td className="num">{b.in_stock} / {b.stations_total}</td>
+                  <td className="num" style={{ color: b.short ? 'var(--alarm)' : undefined }}>
+                    {b.short}
+                  </td>
+                  <td className="num" style={{ color: b.no_record ? 'var(--oil)' : 'var(--ink-3)' }}>
+                    {b.no_record || '—'}
+                  </td>
+                  <td className="num" style={{
+                    color: b.availability_pct >= 100 ? 'var(--ok)' : 'var(--alarm)',
+                    fontWeight: 600,
+                  }}>
+                    {b.availability_pct?.toFixed(1)}%
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {boost.some((b) => b.no_record > 0) && (
+            <div className="note" style={{ marginTop: 12 }}>
+              คอลัมน์ "ไม่มีแถวในไฟล์" คือสาขาที่ไม่เคยมีสินค้าตัวนั้นเลย
+              ต่างจากสาขาที่มีแถวแต่สต็อกเป็นศูนย์ — ระบบจะสร้างรายการเติมให้ทั้งสองแบบ
+            </div>
+          )}
+        </div>
       )}
 
       {budget && (
