@@ -269,6 +269,9 @@ export interface MasterStationRow {
   plant_code: string; site_code_1: string | null; site_code_2: string | null
   kind: string | null; station_type: string | null
   station_name: string | null; province: string | null; area: string | null
+  /** ผู้จัดการเขต — ขอบเขตที่ใช้จริงในการโอนเกลี่ย ไม่ใช่คอลัมน์ 'เขตพื้นที่' */
+  area_id: string | null; area_manager: string | null
+  area_phone: string | null; region_name: string | null
   closed_date: string | null
 }
 
@@ -280,6 +283,8 @@ export function parseDatastation(grid: Grid): ParseResult<MasterStationRow> {
     s1: c('Site Code1'), s2: need(c('Site Code2'), 'Site Code2'),
     name: c('ชื่อสถานีบริการ'), prov: c('จังหวัด'), area: c('เขตพื้นที่'),
     kind: c('ชนิด'), type: c('Type'), closed: c('ปิดสถานี'),
+    aid: c('ID_area'), amgr: c('Name_Area'), asur: c('Surname_Area'),
+    aph: c('Phone_Area'), rgn: c('Name_Region'),
   }
   const out = new Map<string, MasterStationRow>()
   let skipped = 0
@@ -305,6 +310,13 @@ export function parseDatastation(grid: Grid): ParseResult<MasterStationRow> {
       kind: i.kind >= 0 ? String(row[i.kind] ?? '').trim() || null : null,
       station_type: i.type >= 0 ? String(row[i.type] ?? '').trim() || null : null,
       station_name: i.name >= 0 ? String(row[i.name] ?? '').trim() || null : null,
+      area_id: i.aid >= 0 ? String(row[i.aid] ?? '').trim() || null : null,
+      area_manager: i.amgr >= 0
+        ? [String(row[i.amgr] ?? '').trim(), i.asur >= 0 ? String(row[i.asur] ?? '').trim() : '']
+            .filter(Boolean).join(' ') || null
+        : null,
+      area_phone: i.aph >= 0 ? String(row[i.aph] ?? '').trim() || null : null,
+      region_name: i.rgn >= 0 ? String(row[i.rgn] ?? '').trim() || null : null,
       province: i.prov >= 0 ? String(row[i.prov] ?? '').trim() || null : null,
       area: i.area >= 0 ? String(row[i.area] ?? '').trim() || null : null,
       closed_date: closed,
