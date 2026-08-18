@@ -57,15 +57,20 @@ export default function Import({ snapshotDate, setSnapshotDate }: {
       if (!rows.length) throw new Error('ไม่พบสินค้าในไฟล์ — ชีตที่มีให้เลือก: ' + sheets.join(', '))
       await upsertChunked('items', rows, 'mat_code', tick)
       await batch(kind, filename, rows.length)
-      say(kind, true, `นำเข้าสินค้า ${rows.length} รายการ${skipped ? ` ข้าม ${skipped} แถว` : ''}` +
-        (warnings.length ? `\n${warnings.slice(0, 3).join('\n')}` : ''))
+      const nb = rows.filter((r) => r.is_booster).length
+      const nc = rows.filter((r) => r.units_per_case > 1).length
+      say(kind, true, [
+        `นำเข้าสินค้า ${rows.length} รายการ${skipped ? ` ข้าม ${skipped} แถว` : ''}`,
+        `หัวเชื้อ ${nb} รายการ · ต้องสั่งยกลัง ${nc} รายการ`,
+        ...warnings.slice(0, 3),
+      ].join('\n'))
       return
     }
 
     if (kind === 'datastation') {
       const { rows, skipped } = parseDatastation(grid)
       if (!rows.length) throw new Error('ไม่พบสถานีในไฟล์ — ชีตที่มีให้เลือก: ' + sheets.join(', '))
-      await upsertChunked('station_master', rows, 'plant_code', tick)
+      await upsertChunked('station_master', rows, 'plant_code,site_code_2', tick)
       await batch(kind, filename, rows.length)
 
       setProgress('สร้างตารางเทียบรหัส…')
@@ -73,7 +78,7 @@ export default function Import({ snapshotDate, setSnapshotDate }: {
       if (error) throw new Error(error.message)
 
       say(kind, true, [
-        `นำเข้าทะเบียนสถานี ${rows.length} แห่ง${skipped ? ` ข้าม ${skipped} แถว` : ''}`,
+        `นำเข้าทะเบียนสถานี ${rows.length} แถว (สาขาหนึ่งมีได้หลายแถว แยกตามชนิด OIL/LPG)${skipped ? ` · ข้าม ${skipped}` : ''}`,
         `สร้างคู่เทียบรหัสอัตโนมัติ ${n ?? 0} คู่ — ตอนนี้ไฟล์เที่ยวรถจับคู่ด้วยรหัสหน้าได้แล้ว`,
       ].join('\n'))
       return
