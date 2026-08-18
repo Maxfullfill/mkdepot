@@ -1,33 +1,69 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { supabase, upsertChunked } from '../lib/supabase'
 import {
   readSheet, parsePowerBI, parseMasterItem, parseME2N, parseWMS, parseTrips,
   parseDatastation, type Grid,
 } from '../lib/parsers'
+import { Fold } from './ui'
 
 type Kind = 'master_items' | 'datastation' | 'power_bi' | 'me2n' | 'wms' | 'trips'
 
-const SOURCES: { kind: Kind; title: string; hint: string; sheet?: string }[] = [
-  { kind: 'master_items', title: 'Master Item', hint: 'ลิตรต่อชิ้น ขนาดลัง หน่วยโอน — ต้องนำเข้าก่อนไฟล์อื่น เพราะสูตรหารด้วยค่าลิตร', sheet: 'Master Item' },
-  { kind: 'datastation',  title: 'Datastation2 — ทะเบียนสถานี', hint: 'คู่รหัสหน้า (Site Code2) กับ PlantCode — แก้ปัญหาสถานีมีหลายรหัส อัปครั้งเดียวใช้ได้ตลอด', sheet: 'Datastation2' },
-  { kind: 'power_bi',     title: 'สต็อกรายสาขา (POWER_BI)', hint: 'คงเหลือและยอดขายเฉลี่ย 7/30/90 วัน — สร้างรายชื่อสาขาให้อัตโนมัติด้วย' },
-  { kind: 'me2n',         title: 'ของระหว่างทาง (ME2N)', hint: 'PO ที่สั่งแล้วแต่ของยังไม่ถึงสาขา ระบบจะหักออกจากยอดสั่งใหม่', sheet: 'ME2N' },
-  { kind: 'wms',          title: 'สต็อกคลัง (WMS)', hint: 'ของที่คลังมีจริง ใช้จำกัดยอดสั่งไม่ให้เกินของที่มี — ไม่อัปก็คำนวณได้ แต่จะไม่มีการจำกัด' },
-  { kind: 'trips',        title: 'เที่ยวรถ', hint: 'สาขาที่รถเข้าในรอบนี้ ระบบคำนวณเฉพาะสาขาในรายการ' },
+interface Source {
+  kind: Kind
+  title: string
+  hint: string
+  sheet?: string
+  /** ข้อมูลตั้งต้น อัปครั้งเดียวพอ ไม่ต้องทำทุกรอบ */
+  setup?: boolean
+  optional?: boolean
+}
+
+const SOURCES: Source[] = [
+  { kind: 'master_items', setup: true, title: 'Master Item', sheet: 'Master Item',
+    hint: 'ลิตรต่อชิ้น หน่วยนับ จำนวนต่อลัง — อัปใหม่เมื่อมีสินค้าเพิ่มหรือแก้ข้อมูลสินค้า' },
+  { kind: 'datastation', setup: true, title: 'Datastation2 — ทะเบียนสถานี', sheet: 'Datastation2',
+    hint: 'รหัสสาขาทุกชุด ผู้จัดการเขต จังหวัด อำเภอ กลุ่ม OLP — อัปใหม่เมื่อมีสาขาเปิดหรือย้ายเขต' },
+
+  { kind: 'power_bi', title: 'สต็อกรายสาขา (POWER_BI)',
+    hint: 'คงเหลือและยอดขายเฉลี่ย 7/30/90 วัน — หัวใจของทุกการคำนวณ' },
+  { kind: 'trips', title: 'เที่ยวรถ',
+    hint: 'สาขาที่รถเข้ารอบนี้ ระบบคำนวณเฉพาะสาขาในรายการ' },
+  { kind: 'me2n', title: 'ของระหว่างทาง (ME2N)', sheet: 'ME2N', optional: true,
+    hint: 'PO ที่สั่งแล้วของยังไม่ถึง — ไม่อัปจะสั่งซ้ำของที่กำลังมา' },
+  { kind: 'wms', title: 'สต็อกคลัง (WMS)', optional: true,
+    hint: 'ของที่คลังมีจริง ใช้จำกัดไม่ให้สั่งเกิน — ไม่อัปก็คำนวณได้ แต่ไม่มีการจำกัด' },
 ]
 
 interface Log { ok: boolean; text: string }
+interface Last { source: string; snapshot_date: string; uploaded_at: string; row_count: number }
 
 export default function Import({ snapshotDate, setSnapshotDate }: {
   snapshotDate: string
   setSnapshotDate: (d: string) => void
 }) {
   const [busy, setBusy] = useState<Kind | null>(null)
+  const [last, setLast] = useState<Record<string, Last>>({})
   const [logs, setLogs] = useState<Record<string, Log>>({})
   const [progress, setProgress] = useState('')
 
   const say = (k: Kind, ok: boolean, text: string) =>
     setLogs((p) => ({ ...p, [k]: { ok, text } }))
+
+  useEffect(() => { void loadLast() }, [])
+
+  async function loadLast() {
+    const { data } = await supabase.from('import_batches')
+      .select('source, snapshot_date, uploaded_at, row_count')
+      .eq('status', 'committed')
+      .order('uploaded_at', { ascending: false })
+      .limit(200)
+    const m: Record<string, Last> = {}
+    ;(data ?? []).forEach((r) => {
+      const k = r.source as string
+      if (!m[k]) m[k] = r as Last
+    })
+    setLast(m)
+  }
 
   async function batch(kind: Kind, filename: string, rows: number) {
     const { data, error } = await supabase.from('import_batches')
@@ -46,6 +82,7 @@ export default function Import({ snapshotDate, setSnapshotDate }: {
       say(kind, false, e instanceof Error ? e.message : String(e))
     } finally {
       setBusy(null); setProgress('')
+      void loadLast()
     }
   }
 
@@ -202,49 +239,102 @@ export default function Import({ snapshotDate, setSnapshotDate }: {
     ].filter(Boolean).join('\n'))
   }
 
+  const fmt = (d?: Last) => {
+    if (!d) return null
+    const days = Math.round((Date.now() - new Date(d.uploaded_at).getTime()) / 86400000)
+    return { date: d.snapshot_date, rows: d.row_count, days }
+  }
+
+  function card(s: Source) {
+    const log = logs[s.kind]
+    const info = fmt(last[s.kind])
+    const stale = info && !s.setup && info.date !== snapshotDate
+
+    return (
+      <div className="card" key={s.kind}>
+        <div className="spread">
+          <div style={{ flex: 1 }}>
+            <h3>
+              {s.title}
+              {s.optional && <span className="tag" style={{ marginLeft: 8 }}>ไม่บังคับ</span>}
+            </h3>
+            <p className="hint" style={{ marginBottom: 6 }}>{s.hint}</p>
+            {info ? (
+              <p style={{ margin: 0, fontSize: 12.5, color: stale ? 'var(--oil)' : 'var(--ok)' }}>
+                ล่าสุด {info.date} · {info.rows?.toLocaleString()} แถว
+                {info.days > 0 && ` · ${info.days} วันก่อน`}
+                {stale && ' — คนละวันกับที่เลือกไว้'}
+              </p>
+            ) : (
+              <p style={{ margin: 0, fontSize: 12.5, color: 'var(--ink-3)' }}>ยังไม่เคยนำเข้า</p>
+            )}
+          </div>
+          <label className="file">
+            <input
+              type="file" accept=".xlsx,.xls,.xlsm" disabled={busy !== null}
+              onChange={(e) => {
+                const f = e.target.files?.[0]
+                if (f) handle(s.kind, f, s.sheet)
+                e.target.value = ''
+              }}
+            />
+            {busy === s.kind ? (progress || 'กำลังทำงาน…') : info ? 'อัปใหม่' : 'เลือกไฟล์'}
+          </label>
+        </div>
+        {log && (
+          <div className={`note ${log.ok ? 'good' : 'bad'}`}
+            style={{ marginTop: 12, whiteSpace: 'pre-line' }}>
+            {log.text}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  const setup = SOURCES.filter((s) => s.setup)
+  const daily = SOURCES.filter((s) => !s.setup)
+  const setupDone = setup.every((s) => last[s.kind])
+  const dailyDone = daily.filter((s) => !s.optional).every(
+    (s) => last[s.kind]?.snapshot_date === snapshotDate)
+
   return (
     <>
       <h2>นำเข้าข้อมูล</h2>
       <p className="lede">
-        อ่านไฟล์ในเครื่องคุณโดยตรง ไม่ผ่านเซิร์ฟเวอร์ตัวกลาง อัปซ้ำวันเดิมได้ ระบบจะเขียนทับข้อมูลของวันนั้น
+        อ่านไฟล์ในเครื่องคุณโดยตรง ไม่ผ่านเซิร์ฟเวอร์ตัวกลาง · อัปซ้ำวันเดิมได้ ระบบเขียนทับให้
       </p>
 
       <div className="card">
         <h3>ข้อมูล ณ วันที่</h3>
-        <p className="hint">ทุกไฟล์ในรอบนี้จะถูกบันทึกภายใต้วันเดียวกัน ใช้วันที่ของข้อมูล ไม่ใช่วันที่อัป</p>
-        <input type="date" value={snapshotDate} onChange={(e) => setSnapshotDate(e.target.value)} />
+        <p className="hint">
+          ไฟล์ประจำรอบทั้งหมดจะถูกบันทึกภายใต้วันนี้ ใช้วันที่ของข้อมูล ไม่ใช่วันที่อัป
+        </p>
+        <div className="row">
+          <input type="date" value={snapshotDate}
+            onChange={(e) => setSnapshotDate(e.target.value)} />
+          <span className={`tag ${dailyDone ? 'ok' : 'oil'}`}>
+            {dailyDone ? 'ไฟล์ประจำรอบครบแล้ว' : 'ยังไม่ครบ'}
+          </span>
+        </div>
       </div>
 
-      {SOURCES.map((s) => {
-        const log = logs[s.kind]
-        return (
-          <div className="card" key={s.kind}>
-            <div className="spread">
-              <div style={{ flex: 1 }}>
-                <h3>{s.title}</h3>
-                <p className="hint">{s.hint}</p>
-              </div>
-              <label className="file">
-                <input
-                  type="file" accept=".xlsx,.xls,.xlsm"
-                  disabled={busy !== null}
-                  onChange={(e) => {
-                    const f = e.target.files?.[0]
-                    if (f) handle(s.kind, f, s.sheet)
-                    e.target.value = ''
-                  }}
-                />
-                {busy === s.kind ? (progress || 'กำลังทำงาน…') : 'เลือกไฟล์'}
-              </label>
-            </div>
-            {log && (
-              <div className={`note ${log.ok ? 'good' : 'bad'}`} style={{ marginTop: 12, whiteSpace: 'pre-line' }}>
-                {log.text}
-              </div>
-            )}
-          </div>
-        )
-      })}
+      <Fold
+        title="ข้อมูลตั้งต้น"
+        note={setupDone ? 'ครบแล้ว' : 'ยังไม่ครบ'}
+        open={!setupDone}
+        hint="อัปครั้งเดียวพอ ไม่ต้องทำทุกรอบ — อัปใหม่เมื่อมีสินค้าหรือสาขาเปลี่ยน"
+      >
+        {setup.map(card)}
+      </Fold>
+
+      <div style={{ margin: '26px 0 14px' }}>
+        <h3 style={{ fontSize: 15, margin: '0 0 2px' }}>ไฟล์ประจำรอบ</h3>
+        <p className="hint" style={{ margin: 0 }}>
+          อัปทุกครั้งก่อนคำนวณ ตามลำดับนี้
+        </p>
+      </div>
+
+      {daily.map(card)}
     </>
   )
 }
