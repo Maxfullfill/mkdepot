@@ -22,6 +22,12 @@ interface OffT {
   coverage_pct: number; order_lines: number; order_qty: number
 }
 
+interface Short {
+  mat_code: string; item_name: string
+  requested: number; depot_stock: number; allocated: number; shortfall: number
+  lines_total: number; lines_unmet: number; stations_out: number
+}
+
 interface Kpi {
   total_lines: number; in_stock_before: number
   short_total: number; short_on_trip: number; short_off_trip: number
@@ -70,13 +76,14 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
   const [diag, setDiag] = useState<string[] | null>(null)
   const [kpi, setKpi] = useState<Kpi | null>(null)
   const [offT, setOffT] = useState<OffT[]>([])
+  const [short, setShort] = useState<Short[]>([])
   const [off, setOff] = useState<OffAlert[]>([])
   const [only, setOnly] = useState<'order' | 'all'>('order')
 
   useEffect(() => setTripDate(snapshotDate), [snapshotDate])
 
   async function calculate() {
-    setBusy(true); setErr(''); setLines([]); setRunId(null); setDiag(null); setKpi(null); setOffT([]); setOff([])
+    setBusy(true); setErr(''); setLines([]); setRunId(null); setDiag(null); setKpi(null); setOffT([]); setShort([]); setOff([])
     try {
       const { data, error } = await supabase.rpc('calculate_replenishment', {
         p_trip_date: tripDate,
@@ -413,6 +420,45 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
             <div className="note bad" style={{ marginBottom: 14 }}>
               หัวเชื้อยังมีจำนวนต่อลังเป็น 1 — แปลว่ายังไม่ได้อัปโหลดไฟล์ Master Item ใหม่
               ระบบจึงยังไม่ปัดเป็นลังเต็ม 24 ให้ · อัปไฟล์ Master Item แล้วคำนวณใหม่อีกครั้ง
+            </div>
+          )}
+
+          {short.length > 0 && (
+            <div className="card" style={{ marginBottom: 14 }}>
+              <h3>คลังของไม่พอ</h3>
+              <p className="hint">
+                เกลี่ยให้สาขาที่ของขาดก่อน ในกลุ่มเดียวกันสาขาที่รถไม่เข้ามานานกว่าได้ก่อน
+                — ที่เหลือต้องรอของเข้าคลัง
+              </p>
+              <table>
+                <thead>
+                  <tr>
+                    <th>สินค้า</th><th className="num">ต้องการ</th><th className="num">คลังมี</th>
+                    <th className="num">จ่ายได้</th><th className="num">ขาด</th>
+                    <th className="num">สาขาที่ยังขาด</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {short.map((s) => (
+                    <tr key={s.mat_code}>
+                      <td>{s.item_name}</td>
+                      <td className="num">{s.requested}</td>
+                      <td className="num">{s.depot_stock}</td>
+                      <td className="num" style={{ color: 'var(--ok)' }}>{s.allocated}</td>
+                      <td className="num" style={{ color: 'var(--alarm)' }}>
+                        <strong>{s.shortfall}</strong>
+                      </td>
+                      <td className="num" style={{ color: s.stations_out ? 'var(--alarm)' : undefined }}>
+                        {s.stations_out || '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="note bad" style={{ marginTop: 12 }}>
+                ขาดรวม {short.reduce((a, s) => a + s.shortfall, 0).toLocaleString()} ชิ้น
+                จาก {short.length} SKU — ต้องแจ้งจัดหา ไม่ใช่ปัญหาการคำนวณ
+              </div>
             </div>
           )}
 
