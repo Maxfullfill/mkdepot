@@ -9,14 +9,18 @@ interface TLine {
   tier: string | null; from_area: string | null; to_area: string | null
   from_stock: number; from_doh: number; to_stock: number; to_doh: number
   uom: string | null; status: string; match_level: string | null
+  station_group: string | null
   from_name?: string; to_name?: string; item_name?: string
 }
 interface Hot {
   plant_code: string; branch_name: string; area: string
+  province: string; district: string
   mat_code: string; item_name: string; uom: string | null
   stock_pcs: number; sales_per_day: number; doh: number | null
   excess_pcs: number; stock_liters: number; no_sale_30d: boolean
 }
+
+type HotKey = keyof Hot
 interface Zone {
   area: string; mat_code: string; item_name: string
   lines: number; stock_pcs: number; short_lines: number
@@ -31,12 +35,15 @@ export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [q, setQ] = useState('')
+  const [sortKey, setSortKey] = useState<HotKey>('excess_pcs')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+  const [onlyDead, setOnlyDead] = useState(false)
 
   useEffect(() => { void loadDash() }, [])
 
   async function loadDash() {
     const [h, z] = await Promise.all([
-      supabase.from('v_doh_hotspot').select('*').order('excess_pcs', { ascending: false }).limit(500),
+      supabase.from('v_doh_hotspot').select('*').order('excess_pcs', { ascending: false }).limit(3000),
       supabase.from('v_zone_balance').select('*'),
     ])
     setHot((h.data ?? []) as Hot[])
@@ -117,11 +124,51 @@ export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
     XLSX.writeFile(wb, `โอนเกลี่ย_${snapshotDate.replace(/-/g, '')}.xlsx`)
   }
 
+  /** กดหัวคอลัมน์เพื่อเรียง กดซ้ำเพื่อสลับมากสุด/น้อยสุด */
+  function sortBy(k: HotKey) {
+    if (k === sortKey) setSortDir(sortDir === 'desc' ? 'asc' : 'desc')
+    else { setSortKey(k); setSortDir(typeof hot[0]?.[k] === 'number' ? 'desc' : 'asc') }
+  }
+
   const shownHot = useMemo(() => {
     const t = q.trim().toLowerCase()
-    return t ? hot.filter((h) =>
-      `${h.branch_name} ${h.item_name} ${h.area} ${h.mat_code}`.toLowerCase().includes(t)) : hot
-  }, [hot, q])
+    let rows = hot
+    if (t) rows = rows.filter((h) =>
+      `${h.branch_name} ${h.item_name} ${h.area} ${h.province} ${h.district} ${h.mat_code}`
+        .toLowerCase().includes(t))
+    if (onlyDead) rows = rows.filter((h) => h.no_sale_30d)
+    const dir = sortDir === 'asc' ? 1 : -1
+    return [...rows].sort((a, b) => {
+      const x = a[sortKey], y = b[sortKey]
+      if (x === null || x === undefined) return 1
+      if (y === null || y === undefined) return -1
+      if (typeof x === 'number' && typeof y === 'number') return (x - y) * dir
+      return String(x).localeCompare(String(y), 'th') * dir
+    })
+  }, [hot, q, sortKey, sortDir, onlyDead])
+
+  function exportHot() {
+    if (!shownHot.length) return
+    const ws = XLSX.utils.json_to_sheet(shownHot.map((h) => ({
+      'จังหวัด': h.province,
+      'อำเภอ': h.district,
+      'ผจก.เขต': h.area,
+      'PlantCode': h.plant_code,
+      'สาขา': h.branch_name,
+      'รหัสสินค้า': h.mat_code,
+      'สินค้า': h.item_name,
+      'คงเหลือ': h.stock_pcs,
+      'หน่วย': h.uom,
+      'ขาย/วัน': h.sales_per_day,
+      'DOH': h.doh,
+      'ของเกิน': h.excess_pcs,
+      'ลิตร': h.stock_liters,
+      'ไม่ขายเลย 30 วัน': h.no_sale_30d ? 'ใช่' : '',
+    })))
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'ของกอง')
+    XLSX.writeFile(wb, `ของกอง_${snapshotDate.replace(/-/g, '')}.xlsx`)
+  }
 
   // จับคู่ข้ามเขต: SKU ที่เขตหนึ่งล้น อีกเขตยังมีที่ว่าง
   const crossPairs = useMemo(() => {
@@ -271,26 +318,61 @@ export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
 
       <Fold title="ของกองรายสาขา"
         note={`${hot.length} บรรทัด · เกิน ${totalExcess.toLocaleString()} ชิ้น`}
-        hint="เรียงจากของเกินมากไปน้อย — ตัวที่ไม่ขายเลย 30 วันควรย้ายออกก่อน">
+        hint="กดหัวคอลัมน์เพื่อเรียง กดซ้ำเพื่อสลับมากสุด/น้อยสุด">
         <div className="row" style={{ marginBottom: 10 }}>
-          <input type="text" placeholder="ค้นหาสาขา สินค้า หรือเขต" value={q}
-            onChange={(e) => setQ(e.target.value)} style={{ width: 250 }} />
+          <input type="text" placeholder="ค้นหาสาขา สินค้า จังหวัด หรือ ผจก." value={q}
+            onChange={(e) => setQ(e.target.value)} style={{ width: 260 }} />
+          <label style={{ display: 'flex', gap: 7, alignItems: 'center', cursor: 'pointer', fontSize: 13 }}>
+            <input type="checkbox" checked={onlyDead} onChange={(e) => setOnlyDead(e.target.checked)} />
+            เฉพาะที่ไม่ขายเลย 30 วัน
+          </label>
           <span style={{ fontSize: 12.5, color: 'var(--ink-3)' }}>
-            {shownHot.length} รายการ · ไม่ขายเลย {deadLines.length} บรรทัด
+            {shownHot.length} รายการ · เกินรวม{' '}
+            {shownHot.reduce((s, h) => s + h.excess_pcs, 0).toLocaleString()} ชิ้น
           </span>
+          <span style={{ flex: 1 }} />
+          <button className="btn ghost" onClick={exportHot} disabled={!shownHot.length}>
+            ดาวน์โหลด Excel
+          </button>
         </div>
-        <div className="tw" style={{ maxHeight: '52vh' }}>
+        <div className="tw" style={{ maxHeight: '58vh' }}>
           <table>
             <thead>
               <tr>
-                <th>ผจก.เขต</th><th>สาขา</th><th>สินค้า</th>
-                <th className="num">คงเหลือ</th><th className="num">ขาย/วัน</th>
-                <th className="num">DOH</th><th className="num">ของเกิน</th><th></th>
+                {([
+                  ['province', 'จังหวัด', false],
+                  ['district', 'อำเภอ', false],
+                  ['area', 'ผจก.เขต', false],
+                  ['branch_name', 'สาขา', false],
+                  ['item_name', 'สินค้า', false],
+                  ['stock_pcs', 'คงเหลือ', true],
+                  ['sales_per_day', 'ขาย/วัน', true],
+                  ['doh', 'DOH', true],
+                  ['excess_pcs', 'ของเกิน', true],
+                  ['stock_liters', 'ลิตร', true],
+                ] as [HotKey, string, boolean][]).map(([k, label, num]) => (
+                  <th key={k} className={num ? 'num' : undefined}
+                    style={{ cursor: 'pointer', userSelect: 'none' }}
+                    onClick={() => sortBy(k)}
+                    title="กดเพื่อเรียง">
+                    {label}
+                    {sortKey === k && (
+                      <span style={{ marginLeft: 4, color: 'var(--act)' }}>
+                        {sortDir === 'desc' ? '▼' : '▲'}
+                      </span>
+                    )}
+                  </th>
+                ))}
+                <th></th>
               </tr>
             </thead>
             <tbody>
-              {shownHot.map((h, i) => (
+              {shownHot.slice(0, 800).map((h, i) => (
                 <tr key={i}>
+                  <td style={{ fontSize: 12.5 }}>{h.province?.replace('จังหวัด', '')}</td>
+                  <td style={{ fontSize: 12.5, color: 'var(--ink-2)' }}>
+                    {h.district?.replace(/^อำเภอ|^เขต/, '')}
+                  </td>
                   <td><span className="tag">{h.area}</span></td>
                   <td>{h.branch_name}</td>
                   <td>{h.item_name}</td>
@@ -298,12 +380,18 @@ export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
                   <td className="num">{h.sales_per_day?.toFixed(2)}</td>
                   <td className="num" style={{ color: 'var(--oil)' }}>{h.doh ?? '∞'}</td>
                   <td className="num"><strong>{h.excess_pcs}</strong></td>
+                  <td className="num" style={{ color: 'var(--ink-3)' }}>{h.stock_liters}</td>
                   <td>{h.no_sale_30d && <span className="tag alarm">ไม่ขายเลย</span>}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        {shownHot.length > 800 && (
+          <p className="hint" style={{ marginTop: 8 }}>
+            แสดง 800 แถวแรกจาก {shownHot.length} — ดาวน์โหลด Excel เพื่อดูครบ
+          </p>
+        )}
       </Fold>
     </>
   )
