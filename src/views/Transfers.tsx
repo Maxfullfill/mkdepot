@@ -95,7 +95,7 @@ export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
   function exportTransfers() {
     if (!active.length) return
     const ws = XLSX.utils.json_to_sheet(active.map((l) => ({
-      'เขต': l.area,
+      'ผจก.เขต': l.area,
       'สาขาต้นทาง': l.from_name,
       'รหัสต้นทาง': l.from_plant,
       'DOH ต้นทาง': l.from_doh,
@@ -147,13 +147,14 @@ export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
       <h2>โอนเกลี่ยสินค้า</h2>
       <p className="lede">
         เอาของเกินจากสาขาหนึ่งไปอุดสาขาที่ขาด แทนการเบิกใหม่จากคลัง
-        ของในเครือข่ายไม่เพิ่ม DOH จึงค่อย ๆ ลงตามยอดขาย · เฉพาะ Class A ไม่รวมหัวเชื้อ
+        ของในเครือข่ายไม่เพิ่ม DOH จึงค่อย ๆ ลงตามยอดขาย ·
+        เขต = สาขาที่อยู่ใต้ผู้จัดการเขตคนเดียวกัน · เฉพาะ Class A ไม่รวมหัวเชื้อ
       </p>
 
       <div className="card">
         <div className="row">
           <button className="btn" onClick={run} disabled={busy}>
-            {busy ? 'กำลังคำนวณ…' : 'คำนวณรายการโอนในเขต'}
+            {busy ? 'กำลังคำนวณ…' : 'คำนวณรายการโอนภายในเขตผู้จัดการ'}
           </button>
           <span style={{ fontSize: 12.5, color: 'var(--ink-3)' }}>ใช้สต็อก ณ {snapshotDate}</span>
           {active.length > 0 && (
@@ -166,7 +167,7 @@ export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
         {err && <div className="note bad" style={{ marginTop: 12 }}>{err}</div>}
         {runId && lines.length === 0 && !busy && (
           <div className="note" style={{ marginTop: 12 }}>
-            ไม่มีคู่ที่โอนกันได้ในเขตเดียวกัน — ทุกสาขาในเขตมีสถานะคล้ายกันหมด
+            ไม่มีคู่ที่โอนกันได้ภายใต้ผู้จัดการเขตคนเดียวกัน — สาขาในเขตมีสถานะคล้ายกันหมด
             ลองดูตารางจับคู่ข้ามเขตด้านล่าง
           </div>
         )}
@@ -178,14 +179,14 @@ export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
             <div className="stat"><dt>รายการโอน</dt><dd>{active.length}</dd></div>
             <div className="stat"><dt>รวมจำนวน</dt><dd>{summary.qty.toLocaleString()} <small>ชิ้น</small></dd></div>
             <div className="stat"><dt>คู่สาขา</dt><dd>{summary.pairs}</dd></div>
-            <div className="stat"><dt>เขตที่เกี่ยวข้อง</dt><dd>{summary.areas}</dd></div>
+            <div className="stat"><dt>ผจก.เขตที่เกี่ยวข้อง</dt><dd>{summary.areas}</dd></div>
           </dl>
 
           <div className="tw" style={{ marginBottom: 20 }}>
             <table>
               <thead>
                 <tr>
-                  <th>เขต</th><th>สินค้า</th>
+                  <th>ผจก.เขต</th><th>สินค้า</th>
                   <th>ต้นทาง</th><th className="num">DOH</th>
                   <th>ปลายทาง</th><th className="num">DOH</th>
                   <th className="num">โอน</th><th></th>
@@ -227,8 +228,8 @@ export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
               <thead>
                 <tr>
                   <th>สินค้า</th>
-                  <th>เขตต้นทาง</th><th className="num">DOH</th><th className="num">ของเกิน</th>
-                  <th>เขตปลายทาง</th><th className="num">DOH</th><th className="num">สาขาขาด</th>
+                  <th>เขตต้นทาง (ผจก.)</th><th className="num">DOH</th><th className="num">ของเกิน</th>
+                  <th>เขตปลายทาง (ผจก.)</th><th className="num">DOH</th><th className="num">สาขาขาด</th>
                   <th className="num">โอนได้</th>
                 </tr>
               </thead>
@@ -267,7 +268,7 @@ export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
           <table>
             <thead>
               <tr>
-                <th>เขต</th><th>สาขา</th><th>สินค้า</th>
+                <th>ผจก.เขต</th><th>สาขา</th><th>สินค้า</th>
                 <th className="num">คงเหลือ</th><th className="num">ขาย/วัน</th>
                 <th className="num">DOH</th><th className="num">ของเกิน</th><th></th>
               </tr>
