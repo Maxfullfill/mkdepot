@@ -80,6 +80,7 @@ export default function Import({ snapshotDate, setSnapshotDate }: {
       say(kind, true, [
         `นำเข้าทะเบียนสถานี ${rows.length} แถว (สาขาหนึ่งมีได้หลายแถว แยกตามชนิด OIL/LPG)${skipped ? ` · ข้าม ${skipped}` : ''}`,
         `สร้างคู่เทียบรหัสอัตโนมัติ ${n ?? 0} คู่ — ตอนนี้ไฟล์เที่ยวรถจับคู่ด้วยรหัสหน้าได้แล้ว`,
+        `ผู้จัดการเขต ${new Set(rows.map((r) => r.area_manager).filter(Boolean)).size} คน — ใช้เป็นขอบเขตการโอนเกลี่ย`,
       ].join('\n'))
       return
     }
