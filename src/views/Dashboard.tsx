@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 
 interface Sum {
   ready: boolean
+  reason?: string
   snapshot_date?: string
   doh_target?: number
   files?: Record<string, { date: string; rows: number; age: number }>
@@ -30,20 +31,37 @@ const FILE_LABEL: Record<string, string> = {
 
 export default function Dashboard({ go }: { go: (tab: string) => void }) {
   const [d, setD] = useState<Sum | null>(null)
+  const [err, setErr] = useState('')
   const [busy, setBusy] = useState(true)
 
   useEffect(() => {
-    supabase.rpc('dashboard_summary').then(({ data }) => {
-      setD((data as Sum) ?? { ready: false }); setBusy(false)
+    supabase.rpc('dashboard_summary').then(({ data, error }) => {
+      if (error) setErr(error.message)
+      else setD((data as Sum) ?? { ready: false })
+      setBusy(false)
     })
   }, [])
 
   if (busy) return <><h2>ภาพรวม</h2><div className="note">กำลังโหลด…</div></>
 
+  if (err) return (
+    <>
+      <h2>ภาพรวม</h2>
+      <div className="card">
+        <h3>โหลดข้อมูลไม่สำเร็จ</h3>
+        <p className="hint">ฐานข้อมูลตอบกลับมาว่า</p>
+        <div className="note bad" style={{ whiteSpace: 'pre-wrap' }}>{err}</div>
+        <p className="hint" style={{ marginTop: 14, marginBottom: 0 }}>
+          ถ้าขึ้นว่าไม่รู้จักฟังก์ชันหรือ view แปลว่ายังรัน migration ไม่ครบ
+        </p>
+      </div>
+    </>
+  )
+
   if (!d?.ready) return (
     <>
       <h2>ภาพรวม</h2>
-      <p className="lede">ยังไม่มีข้อมูลในระบบ</p>
+      <p className="lede">{d?.reason ?? 'ยังไม่มีข้อมูลในระบบ'}</p>
       <div className="card">
         <h3>เริ่มต้นใช้งาน</h3>
         <p className="hint">
@@ -54,12 +72,20 @@ export default function Dashboard({ go }: { go: (tab: string) => void }) {
     </>
   )
 
-  const k = d.kpi!
+  const k = {
+    lines: 0, in_stock: 0, short: 0, avail: 0,
+    doh: 0, stock_l: 0, excess_l: 0, stations: 0, ...(d.kpi ?? {}),
+  }
   const prev = d.kpi_prev
-  const a = d.alerts!
+  const a = {
+    transfer_pending: 0, transfer_old: 0, depot_urgent: 0,
+    offtemplate_short: 0, unmapped: 0, no_shipto: 0, ...(d.alerts ?? {}),
+  }
   const target = d.doh_target ?? 20
-  const dAvail = prev?.avail != null ? +(k.avail - prev.avail).toFixed(1) : null
-  const dDoh = prev?.doh != null ? +(k.doh - prev.doh).toFixed(1) : null
+  const dAvail = prev?.avail != null && k.avail != null
+    ? +(k.avail - prev.avail).toFixed(1) : null
+  const dDoh = prev?.doh != null && k.doh != null
+    ? +(k.doh - prev.doh).toFixed(1) : null
 
   const delta = (v: number | null, goodUp: boolean) => {
     if (v === null || v === 0) return null
@@ -91,20 +117,21 @@ export default function Dashboard({ go }: { go: (tab: string) => void }) {
     <>
       <h2>ภาพรวม</h2>
       <p className="lede">
-        ข้อมูล ณ {d.snapshot_date} · {k.stations} สาขา · Class A {k.lines.toLocaleString()} บรรทัด
+        ข้อมูล ณ {d.snapshot_date} · {k.stations} สาขา ·
+        Class A {Number(k.lines ?? 0).toLocaleString()} บรรทัด
       </p>
 
       <dl className="stats">
         <div className="stat">
           <dt>Availability · เป้า 97%</dt>
           <dd style={{ color: k.avail >= 97 ? 'var(--ok)' : 'var(--alarm)' }}>
-            {k.avail}<small>%</small>{delta(dAvail, true)}
+            {k.avail ?? '—'}<small>%</small>{delta(dAvail, true)}
           </dd>
         </div>
         <div className="stat">
           <dt>DOH · เป้า {target} วัน</dt>
           <dd style={{ color: k.doh <= target ? 'var(--ok)' : 'var(--oil)' }}>
-            {k.doh}{delta(dDoh, false)}
+            {k.doh ?? '—'}{delta(dDoh, false)}
           </dd>
         </div>
         <div className="stat">
@@ -114,7 +141,7 @@ export default function Dashboard({ go }: { go: (tab: string) => void }) {
         <div className="stat">
           <dt>ของเกินเพดาน</dt>
           <dd style={{ color: 'var(--oil)' }}>
-            {Number(k.excess_l).toLocaleString()}<small> ลิตร</small>
+            {Number(k.excess_l ?? 0).toLocaleString()}<small> ลิตร</small>
           </dd>
         </div>
       </dl>
