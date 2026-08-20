@@ -74,6 +74,8 @@ export interface StockRow {
   /** คลาสของสินค้าตัวนี้ที่สาขานี้ — สาขาเดียวมีได้หลายคลาส */
   class_fix: string | null; class_dyna: string | null; depot_class: string | null
   stock_l: number; stock_pcs: number
+  /** ระหว่างทางตามที่ระบบสาขาเห็น ใช้เทียบกับ ME2N หาของที่ยังไม่ได้ทำรับ */
+  transit_l: number; transit_pcs: number
   sales_7_l: number; sales_30_l: number; sales_90_l: number
   sales_7_pcs: number; sales_30_pcs: number; sales_90_pcs: number
 }
@@ -95,6 +97,7 @@ export function parsePowerBI(grid: Grid) {
     depotCls: c('Class-คลัง(3ด.Fix)'),
     stkL: need(c('คงเหลือ(ลิตร)'), 'คงเหลือ(ลิตร)'),
     stkP: need(c('คงเหลือ(ชิ้น)'), 'คงเหลือ(ชิ้น)'),
+    trL: c('ระหว่างทาง(ลิตร)'), trP: c('ระหว่างทาง(ชิ้น)'),
     s7L: c('ยอดขาย(ลิตร)เฉลี่ย 7 วัน'), s30L: c('ยอดขาย(ลิตร)เฉลี่ย 30 วัน'), s90L: c('ยอดขาย(ลิตร)เฉลี่ย 90 วัน'),
     s7P: c('ยอดขาย(ชิ้น)เฉลี่ย 7 วัน'), s30P: c('ยอดขาย(ชิ้น)เฉลี่ย 30 วัน'), s90P: c('ยอดขาย(ชิ้น)เฉลี่ย 90 วัน'),
   }
@@ -120,6 +123,8 @@ export function parsePowerBI(grid: Grid) {
       class_dyna: String(row[i.clsDyn] ?? '').trim() || null,
       depot_class: i.depotCls >= 0 ? String(row[i.depotCls] ?? '').trim() || null : null,
       stock_l: num(row[i.stkL]), stock_pcs: Math.round(num(row[i.stkP])),
+      transit_l: i.trL >= 0 ? num(row[i.trL]) : 0,
+      transit_pcs: i.trP >= 0 ? Math.round(num(row[i.trP])) : 0,
       sales_7_l: num(row[i.s7L]), sales_30_l: num(row[i.s30L]), sales_90_l: num(row[i.s90L]),
       sales_7_pcs: num(row[i.s7P]), sales_30_pcs: num(row[i.s30P]), sales_90_pcs: num(row[i.s90P]),
     })
