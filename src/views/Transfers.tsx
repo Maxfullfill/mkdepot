@@ -10,6 +10,7 @@ interface TLine {
   from_stock: number; from_doh: number; to_stock: number; to_doh: number
   uom: string | null; status: string; match_level: string | null
   station_group: string | null
+  confirmed_at: string | null; days_pending?: number
   from_name?: string; to_name?: string; item_name?: string
 }
 interface Hot {
@@ -33,13 +34,73 @@ export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
   const [hot, setHot] = useState<Hot[]>([])
   const [zone, setZone] = useState<Zone[]>([])
   const [busy, setBusy] = useState(false)
+  const [pending, setPending] = useState<TLine[]>([])
+  const [picked, setPicked] = useState<Set<number>>(new Set())
   const [err, setErr] = useState('')
   const [q, setQ] = useState('')
   const [sortKey, setSortKey] = useState<HotKey>('excess_pcs')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [onlyDead, setOnlyDead] = useState(false)
 
-  useEffect(() => { void loadDash() }, [])
+  useEffect(() => { void loadDash(); void loadPending() }, [])
+
+  /** ใบที่ยืนยันแล้วแต่ของยังไม่ถึง — ระบบหักออกจากการคำนวณรอบใหม่ให้แล้ว */
+  async function loadPending() {
+    const { data } = await supabase
+      .from('transfer_lines')
+      .select('*, items(template_descr, desc_th)')
+      .eq('status', 'ยืนยัน')
+      .order('confirmed_at', { ascending: true })
+    const names = new Map(
+      (await supabase.from('stations').select('plant_code, branch_name')).data
+        ?.map((s) => [s.plant_code as string, s.branch_name as string]) ?? []
+    )
+    setPending((data ?? []).map((r: Record<string, unknown>) => {
+      const it = r.items as { template_descr: string | null; desc_th: string | null } | null
+      const l = r as unknown as TLine
+      const days = l.confirmed_at
+        ? Math.floor((Date.now() - new Date(l.confirmed_at).getTime()) / 86400000) : 0
+      return {
+        ...l,
+        from_name: names.get(l.from_plant) ?? l.from_plant,
+        to_name: names.get(l.to_plant) ?? l.to_plant,
+        item_name: it?.template_descr ?? it?.desc_th ?? l.mat_code,
+        days_pending: days,
+      }
+    }))
+  }
+
+  async function confirmRun() {
+    if (!runId) return
+    const keep = active.map((l) => l.id)
+    // ตัดที่ไม่เอาออกก่อน แล้วยืนยันที่เหลือ
+    const drop = lines.filter((l) => !keep.includes(l.id)).map((l) => l.id)
+    if (drop.length) await supabase.from('transfer_lines')
+      .update({ status: 'ยกเลิก' }).in('id', drop)
+    const { error } = await supabase.rpc('confirm_transfer_run', {
+      p_run_id: runId,
+      p_by: (await supabase.auth.getUser()).data.user?.id ?? null,
+    })
+    if (error) { setErr(error.message); return }
+    await Promise.all([loadLines(runId), loadPending()])
+  }
+
+  async function receivePicked() {
+    if (!picked.size) return
+    const { error } = await supabase.rpc('receive_transfer_lines',
+      { p_ids: [...picked] })
+    if (error) { setErr(error.message); return }
+    setPicked(new Set())
+    await loadPending()
+  }
+
+  function togglePick(id: number) {
+    setPicked((p) => {
+      const n = new Set(p)
+      n.has(id) ? n.delete(id) : n.add(id)
+      return n
+    })
+  }
 
   async function loadDash() {
     const [h, z] = await Promise.all([
@@ -204,6 +265,61 @@ export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
         เฉพาะ Class A ไม่รวมหัวเชื้อ
       </p>
 
+      {pending.length > 0 && (
+        <div className="card">
+          <div className="spread">
+            <div>
+              <h3>ของระหว่างโอน</h3>
+              <p className="hint" style={{ marginBottom: 0 }}>
+                ยืนยันแล้วแต่ยังไม่ได้รับ — ระบบหักออกจากการคำนวณรอบใหม่ให้แล้ว
+                จึงไม่เสนอโอนซ้ำ · ติ๊กแล้วกดรับของเมื่อของถึงปลายทาง
+              </p>
+            </div>
+            {picked.size > 0 && (
+              <button className="btn" onClick={receivePicked}>
+                รับของ {picked.size} รายการ
+              </button>
+            )}
+          </div>
+          <div className="tw" style={{ maxHeight: '34vh', marginTop: 14 }}>
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ width: 34 }}></th>
+                  <th>สินค้า</th><th>ต้นทาง</th><th>ปลายทาง</th>
+                  <th className="num">จำนวน</th><th className="num">ค้างมา</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pending.map((l) => (
+                  <tr key={l.id}>
+                    <td>
+                      <input type="checkbox" checked={picked.has(l.id)}
+                        onChange={() => togglePick(l.id)} />
+                    </td>
+                    <td>{l.item_name}</td>
+                    <td>{l.from_name}</td>
+                    <td>{l.to_name}</td>
+                    <td className="num"><strong>{l.qty}</strong></td>
+                    <td className="num" style={{
+                      color: (l.days_pending ?? 0) > 10 ? 'var(--alarm)' : 'var(--ink-3)',
+                    }}>
+                      {l.days_pending} วัน
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {pending.some((l) => (l.days_pending ?? 0) > 10) && (
+            <div className="note bad" style={{ marginTop: 12 }}>
+              มีใบค้างเกิน 10 วัน — ถ้าของถึงแล้วให้กดรับของ
+              ระบบจะเลิกนับเองเมื่อครบ 14 วัน เพื่อกันตัวเลขซ้ำ
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="card">
         <div className="row">
           <button className="btn" onClick={run} disabled={busy}>
@@ -214,6 +330,11 @@ export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
             <>
               <span style={{ flex: 1 }} />
               <button className="btn ghost" onClick={exportTransfers}>ดาวน์โหลดใบโอน</button>
+              {active.some((l) => l.status === 'เสนอ') && (
+                <button className="btn" onClick={confirmRun}>
+                  ยืนยันสั่งโอน {active.filter((l) => l.status === 'เสนอ').length} รายการ
+                </button>
+              )}
             </>
           )}
         </div>
@@ -267,10 +388,14 @@ export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
                     </td>
                     <td className="num"><strong>{l.qty}</strong></td>
                     <td>
-                      <button className="btn ghost"
-                        onClick={() => setStatus(l.id, l.status === 'ยกเลิก' ? 'เสนอ' : 'ยกเลิก')}>
-                        {l.status === 'ยกเลิก' ? 'คืนค่า' : 'ตัดออก'}
-                      </button>
+                      {l.status === 'ยืนยัน' ? (
+                        <span className="tag ok">สั่งแล้ว</span>
+                      ) : (
+                        <button className="btn ghost"
+                          onClick={() => setStatus(l.id, l.status === 'ยกเลิก' ? 'เสนอ' : 'ยกเลิก')}>
+                          {l.status === 'ยกเลิก' ? 'คืนค่า' : 'ตัดออก'}
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
