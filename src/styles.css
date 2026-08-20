@@ -37,10 +37,10 @@
   --sans: 'IBM Plex Sans Thai', system-ui, -apple-system, sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, monospace;
 
-  --r:  8px;
-  --r2: 5px;
-  --shadow:   0 1px 2px rgba(44, 41, 38, .04);
-  --shadow-2: 0 4px 16px rgba(44, 41, 38, .08);
+  --r:  14px;
+  --r2: 9px;
+  --shadow:   0 1px 3px rgba(44, 41, 38, .05);
+  --shadow-2: 0 10px 32px rgba(44, 41, 38, .10);
 }
 
 * { box-sizing: border-box; }
@@ -48,26 +48,39 @@ html, body, #root { height: 100%; margin: 0; }
 
 body {
   background: var(--paper);
+  background-image:
+    radial-gradient(circle at 12% 8%,  #e5ecf6 0%, transparent 46%),
+    radial-gradient(circle at 88% 4%,  #ece7f5 0%, transparent 42%),
+    radial-gradient(circle at 78% 92%, #e4f0ea 0%, transparent 44%);
+  background-attachment: fixed;
   color: var(--ink);
   font-family: var(--sans);
   font-size: 15.5px;
   line-height: 1.65;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  padding: 18px;
 }
 
 ::selection { background: var(--act-soft); }
 
 /* ── โครง ────────────────────────────────────────────────────────── */
 
-.shell { display: grid; grid-template-columns: 268px 1fr; min-height: 100%; }
+.shell {
+  display: grid; grid-template-columns: 268px 1fr;
+  height: calc(100vh - 36px);
+  background: var(--card);
+  border-radius: 22px;
+  overflow: hidden;
+  box-shadow: 0 18px 48px rgba(44, 41, 38, .10), 0 2px 8px rgba(44, 41, 38, .04);
+}
 
 .rail {
   border-right: 1px solid var(--line);
-  background: var(--card);
-  padding: 32px 0 24px;
+  background: var(--card-2);
+  padding: 30px 0 22px;
   display: flex; flex-direction: column;
-  position: sticky; top: 0; height: 100vh;
+  height: 100%; overflow-y: auto;
 }
 
 .brand { padding: 0 24px 26px; }
@@ -95,10 +108,14 @@ body {
   margin-bottom: 3px;
 }
 .nav button:hover { background: var(--card-2); color: var(--ink); }
-.nav button[aria-current='true'] {
-  background: var(--act-bg); color: var(--act); font-weight: 600;
+.nav button {
+  position: relative; border-radius: 11px;
 }
-.nav button[aria-current='true'] .step { color: var(--act); opacity: .65; }
+.nav button[aria-current='true'] {
+  background: var(--act); color: #fff; font-weight: 600;
+  box-shadow: 0 4px 12px rgba(74, 124, 116, .26);
+}
+.nav button[aria-current='true'] .step { color: #fff; opacity: .6; }
 .nav .step {
   font-family: var(--mono); font-size: 12px; color: var(--ink-3);
   flex: none; font-weight: 400; min-width: 9px;
@@ -123,7 +140,27 @@ button.note.bad:hover { border-color: var(--alarm); }
 }
 .rail footer button:hover { color: var(--act); }
 
-.main { padding: 52px 56px 110px; max-width: 1300px; }
+.main { padding: 44px 48px 90px; overflow-y: auto; height: 100%; }
+.main > .page { max-width: 1240px; }
+
+/* ── เปลี่ยนหน้าให้ต่อเนื่อง ─────────────────────────────────────── */
+
+.page { animation: pageIn .32s cubic-bezier(.22, .8, .3, 1) both; }
+@keyframes pageIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+.page > * { animation: riseIn .38s cubic-bezier(.22, .8, .3, 1) both; }
+.page > *:nth-child(1) { animation-delay: .02s; }
+.page > *:nth-child(2) { animation-delay: .05s; }
+.page > *:nth-child(3) { animation-delay: .08s; }
+.page > *:nth-child(4) { animation-delay: .11s; }
+.page > *:nth-child(5) { animation-delay: .14s; }
+.page > *:nth-child(n+6) { animation-delay: .17s; }
+@keyframes riseIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
 
 h2 { font-size: 27px; font-weight: 600; margin: 0 0 8px; letter-spacing: -.02em; }
 .lede { color: var(--ink-2); margin: 0 0 36px; max-width: 68ch; font-size: 15.5px; }
@@ -134,7 +171,9 @@ h2 { font-size: 27px; font-weight: 600; margin: 0 0 8px; letter-spacing: -.02em;
   background: var(--card); border: 1px solid var(--line);
   border-radius: var(--r); padding: 24px 26px; margin-bottom: 18px;
   box-shadow: var(--shadow);
+  transition: box-shadow .2s, border-color .2s;
 }
+.card:hover { box-shadow: 0 4px 18px rgba(44, 41, 38, .07); }
 .card h3 { font-size: 16.5px; font-weight: 600; margin: 0 0 5px; letter-spacing: -.01em; }
 .card .hint { font-size: 14px; color: var(--ink-3); margin: 0 0 18px; line-height: 1.6; }
 .card > table { margin-top: 6px; }
@@ -151,7 +190,10 @@ button.btn {
   transition: background .14s, border-color .14s, transform .07s;
   white-space: nowrap;
 }
-button.btn:hover:not(:disabled) { background: #3f6b64; border-color: #3f6b64; }
+button.btn:hover:not(:disabled) {
+  background: #3f6b64; border-color: #3f6b64;
+  box-shadow: 0 4px 14px rgba(74, 124, 116, .28);
+}
 button.btn:active:not(:disabled) { transform: translateY(1px); }
 button.btn.ghost {
   background: transparent; color: var(--ink-2); border-color: var(--line-2);
@@ -285,8 +327,11 @@ label.file input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 
 .tw {
   overflow: auto; border: 1px solid var(--line); border-radius: var(--r);
-  background: #fff; max-height: 64vh;
+  background: #fff; max-height: 62vh;
 }
+.tw::-webkit-scrollbar { width: 10px; height: 10px; }
+.tw::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 99px; border: 3px solid #fff; }
+.tw::-webkit-scrollbar-track { background: transparent; }
 table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 14.5px; }
 
 thead th {
@@ -339,9 +384,19 @@ td.num input { width: 74px; text-align: right; font-family: var(--mono); padding
   gap: 14px; margin: 0 0 26px; background: none; border: 0;
 }
 .stat {
+  position: relative; overflow: hidden;
   background: var(--card); border: 1px solid var(--line);
-  border-radius: var(--r); padding: 20px 22px; box-shadow: var(--shadow);
+  border-radius: var(--r); padding: 22px 22px 20px; box-shadow: var(--shadow);
+  transition: transform .2s, box-shadow .2s;
 }
+.stat::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+}
+.stats .stat:nth-child(4n+1)::before { background: #a8c4e8; }
+.stats .stat:nth-child(4n+2)::before { background: #c9bde8; }
+.stats .stat:nth-child(4n+3)::before { background: #f0cf9a; }
+.stats .stat:nth-child(4n+4)::before { background: #a9d6bd; }
+.stat:hover { transform: translateY(-2px); box-shadow: 0 8px 22px rgba(44, 41, 38, .09); }
 .stat dt { font-size: 13.5px; color: var(--ink-3); margin: 0 0 8px; }
 .stat dd {
   font-family: var(--mono); font-size: 30px; margin: 0;
@@ -363,7 +418,13 @@ td.num input { width: 74px; text-align: right; font-family: var(--mono); padding
 /* ── จอเล็ก ──────────────────────────────────────────────────────── */
 
 @media (max-width: 960px) {
-  .shell { grid-template-columns: 1fr; }
+  body { padding: 0; }
+  .shell {
+    grid-template-columns: 1fr; height: auto; min-height: 100vh;
+    border-radius: 0; box-shadow: none;
+  }
+  .rail { height: auto; overflow: visible; }
+  .main { height: auto; overflow: visible; }
   .rail {
     position: static; height: auto;
     border-right: 0; border-bottom: 1px solid var(--line); padding: 20px 0 0;
@@ -376,16 +437,23 @@ td.num input { width: 74px; text-align: right; font-family: var(--mono); padding
   .rail footer { display: flex; align-items: center; gap: 16px; padding: 14px 20px; margin: 0; }
   .rail footer > div { margin: 0 !important; }
   .rail footer button { margin: 0; }
-  .main { padding: 30px 20px 84px; }
+  .main { padding: 26px 18px 80px; }
   h2 { font-size: 23px; }
   .stats { grid-template-columns: repeat(auto-fit, minmax(146px, 1fr)); gap: 10px; }
   .stat { padding: 16px 18px; }
   .stat dd { font-size: 25px; }
 }
 
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+  .page, .page > * { opacity: 1 !important; transform: none !important; }
+}
 
 @media print {
+  body { padding: 0; background: #fff; }
+  .shell { height: auto; border-radius: 0; box-shadow: none; }
+  .main { overflow: visible; height: auto; }
+  .page, .page > * { animation: none; opacity: 1; }
   .rail, button, label.file { display: none !important; }
   .main { padding: 0; max-width: none; }
   .tw { max-height: none; overflow: visible; }
