@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from './lib/supabase'
 import Login, { Pending } from './views/Login'
@@ -13,6 +14,9 @@ import Users from './views/Users'
 
 const today = () => new Date().toISOString().slice(0, 10)
 
+type VTDoc = Document & {
+  startViewTransition?: (cb: () => void) => { finished: Promise<void> }
+}
 type Tab = 'home' | 'import' | 'run' | 'transfer' | 'depot' | 'kpi' | 'settings' | 'users'
 interface Me { username: string; role: 'staff' | 'admin'; is_active: boolean }
 interface Item { id: Tab; label: string; step?: string }
@@ -22,7 +26,22 @@ export default function App() {
   const [me, setMe] = useState<Me | null>(null)
   const [ready, setReady] = useState(false)
   const [tab, setTab] = useState<Tab>('home')
+  const tabRef = useRef<Tab>('home')
+  useEffect(() => { tabRef.current = tab }, [tab])
   const [snapshotDate, setSnapshotDate] = useState(today())
+
+  /** เปลี่ยนหน้าแบบมอร์ฟ — เบราว์เซอร์ถ่ายภาพหน้าเดิมแล้วค่อย ๆ กลายเป็นหน้าใหม่
+   *  flushSync บังคับให้ DOM อัปเดตเสร็จภายในคอลแบ็ก ไม่งั้นภาพจะไม่ตรง
+   *  เบราว์เซอร์ที่ไม่รองรับจะเปลี่ยนหน้าตามปกติ */
+  const navigate = useCallback((next: string) => {
+    const go = () => setTab(next as Tab)
+    if (next === tabRef.current) return
+    const doc = document as VTDoc
+    if (!doc.startViewTransition || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      go(); return
+    }
+    doc.startViewTransition(() => { flushSync(go) })
+  }, [])
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session))
@@ -88,7 +107,7 @@ export default function App() {
             <div className="nav-group" key={gi}>
               {g.label && <div className="nav-label">{g.label}</div>}
               {g.items.map((t) => (
-                <button key={t.id} aria-current={tab === t.id} onClick={() => setTab(t.id)}>
+                <button key={t.id} aria-current={tab === t.id} onClick={() => navigate(t.id)}>
                   {t.step && <span className="step">{t.step}</span>}
                   {t.label}
                 </button>
@@ -109,7 +128,7 @@ export default function App() {
       <main className="main">
         {/* key=tab ทำให้ React สร้างใหม่ทุกครั้ง แอนิเมชันจึงเล่นซ้ำ */}
         <div className="page" key={tab}>
-        {tab === 'home' && <Dashboard go={(t) => setTab(t as Tab)} />}
+        {tab === 'home' && <Dashboard go={(t) => navigate(t as Tab)} />}
         {tab === 'import' && <Import snapshotDate={snapshotDate} setSnapshotDate={setSnapshotDate} />}
         {tab === 'run' && <Run snapshotDate={snapshotDate} />}
         {tab === 'transfer' && <Transfers snapshotDate={snapshotDate} />}
