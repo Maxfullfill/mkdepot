@@ -156,12 +156,15 @@ export default function Import({ snapshotDate, setSnapshotDate }: {
     }
 
     if (kind === 'me2n') {
-      const { rows, skipped } = parseME2N(grid)
+      const { rows, skipped, warnings } = parseME2N(grid)
       const bid = await batch(kind, filename, rows.length)
       await upsertChunked('in_transit',
         rows.map((r) => ({ ...r, batch_id: bid, snapshot_date: snapshotDate })),
         'snapshot_date,plant_code,mat_code,po_no', tick)
-      say(kind, true, `นำเข้าของระหว่างทาง ${rows.length} แถว${skipped ? ` ข้าม ${skipped} แถว` : ''}`)
+      say(kind, true, [
+        `นำเข้า PO ${rows.length} รายการ${skipped ? ` ข้าม ${skipped} แถว` : ''}`,
+        ...warnings,
+      ].join('\n'))
       return
     }
 
