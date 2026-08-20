@@ -107,6 +107,8 @@ export default function App() {
       </aside>
 
       <main className="main">
+        {/* key=tab ทำให้ React สร้างใหม่ทุกครั้ง แอนิเมชันจึงเล่นซ้ำ */}
+        <div className="page" key={tab}>
         {tab === 'home' && <Dashboard go={(t) => setTab(t as Tab)} />}
         {tab === 'import' && <Import snapshotDate={snapshotDate} setSnapshotDate={setSnapshotDate} />}
         {tab === 'run' && <Run snapshotDate={snapshotDate} />}
@@ -115,6 +117,7 @@ export default function App() {
         {tab === 'kpi' && <KpiPage />}
         {tab === 'settings' && <Settings />}
         {tab === 'users' && me.role === 'admin' && <Users me={me.username} />}
+        </div>
       </main>
     </div>
   )
