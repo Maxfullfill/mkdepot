@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { LineChart, type Point } from './Chart'
 
 interface Sum {
   ready: boolean
@@ -24,6 +25,24 @@ interface Sum {
   falling?: { name: string; now: number; before: number; drop: number }[]
 }
 
+interface Hist {
+  snapshot_date: string; lines: number; in_stock: number; short: number
+  avail: number | null; doh: number | null
+  stock_l: number; excess_l: number; booster_pct: number | null
+}
+
+type Metric = 'avail' | 'doh' | 'short' | 'excess' | 'booster'
+
+const METRIC: Record<Metric, {
+  label: string; unit: string; good: boolean; dec: number; color: string
+}> = {
+  avail:   { label: 'Availability', unit: '%',   good: true,  dec: 1, color: '#4a7c74' },
+  doh:     { label: 'DOH',          unit: ' วัน', good: false, dec: 1, color: '#9c6206' },
+  short:   { label: 'ของขาด',        unit: '',    good: false, dec: 0, color: '#9c3b30' },
+  excess:  { label: 'ของเกิน',       unit: ' ล.',  good: false, dec: 0, color: '#9c6206' },
+  booster: { label: 'หัวเชื้อ',       unit: '%',   good: true,  dec: 1, color: '#4a7c74' },
+}
+
 const FILE_LABEL: Record<string, string> = {
   master_items: 'Master Item', datastation: 'ทะเบียนสถานี',
   power_bi: 'สต็อกสาขา', trips: 'เที่ยวรถ', me2n: 'ME2N', wms: 'สต็อกคลัง',
@@ -33,6 +52,9 @@ export default function Dashboard({ go }: { go: (tab: string) => void }) {
   const [d, setD] = useState<Sum | null>(null)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(true)
+  const [hist, setHist] = useState<Hist[]>([])
+  const [metric, setMetric] = useState<Metric>('avail')
+  const [range, setRange] = useState(30)
 
   useEffect(() => {
     supabase.rpc('dashboard_summary').then(({ data, error }) => {
@@ -41,6 +63,12 @@ export default function Dashboard({ go }: { go: (tab: string) => void }) {
       setBusy(false)
     })
   }, [])
+
+  useEffect(() => {
+    supabase.rpc('kpi_history', { p_days: range }).then(({ data }) => {
+      if (Array.isArray(data)) setHist(data as Hist[])
+    })
+  }, [range])
 
   if (busy) return <><h2>ภาพรวม</h2><div className="note">กำลังโหลด…</div></>
 
@@ -145,6 +173,65 @@ export default function Dashboard({ go }: { go: (tab: string) => void }) {
           </dd>
         </div>
       </dl>
+
+      {hist.length > 1 && (() => {
+        const m = METRIC[metric]
+        const pts: Point[] = hist.map((h) => ({
+          x: h.snapshot_date,
+          y: metric === 'avail' ? h.avail
+            : metric === 'doh' ? h.doh
+            : metric === 'short' ? h.short
+            : metric === 'excess' ? h.excess_l
+            : h.booster_pct,
+        }))
+        const tgt = metric === 'avail' ? 97 : metric === 'doh' ? target
+          : metric === 'booster' ? 100 : undefined
+        const vals = pts.map((p) => p.y).filter((v): v is number => v !== null)
+        const first = vals[0], last = vals[vals.length - 1]
+        const diff = vals.length > 1 ? +(last - first).toFixed(m.dec) : null
+
+        return (
+          <div className="card">
+            <div className="spread" style={{ marginBottom: 16 }}>
+              <div>
+                <h3>แนวโน้มย้อนหลัง</h3>
+                <p className="hint" style={{ marginBottom: 0 }}>
+                  {hist.length} วันที่มีข้อมูล · เก็บทุกครั้งที่นำเข้าไฟล์ POWER_BI
+                  {diff !== null && (
+                    <> · เปลี่ยนไป{' '}
+                      <strong style={{
+                        color: (m.good ? diff > 0 : diff < 0) ? 'var(--ok)'
+                          : diff === 0 ? 'var(--ink-3)' : 'var(--alarm)',
+                      }}>
+                        {diff > 0 ? '+' : ''}{diff}{m.unit}
+                      </strong>
+                    </>
+                  )}
+                </p>
+              </div>
+              <div className="row" style={{ gap: 6 }}>
+                {[14, 30, 90].map((r) => (
+                  <button key={r} className={`btn ${range === r ? '' : 'ghost'}`}
+                    style={{ padding: '6px 14px', fontSize: 13.5 }}
+                    onClick={() => setRange(r)}>{r} วัน</button>
+                ))}
+              </div>
+            </div>
+
+            <div className="row" style={{ gap: 6, marginBottom: 18 }}>
+              {(Object.keys(METRIC) as Metric[]).map((k2) => (
+                <button key={k2} className={`btn ${metric === k2 ? '' : 'ghost'}`}
+                  style={{ padding: '6px 14px', fontSize: 13.5 }}
+                  onClick={() => setMetric(k2)}>{METRIC[k2].label}</button>
+              ))}
+            </div>
+
+            <LineChart data={pts} target={tgt} unit={m.unit}
+              goodAbove={m.good} decimals={m.dec} color={m.color}
+              targetLabel={tgt !== undefined ? `เป้า ${tgt}${m.unit}` : undefined} />
+          </div>
+        )
+      })()}
 
       {todo.length > 0 && (
         <div className="card">
