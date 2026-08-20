@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
+import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
+import { Fold } from './ui'
 
 interface Kpi {
   snapshot_date: string; class_fix: string; active_lines: number
@@ -10,9 +12,22 @@ interface Boost {
   stations_total: number; in_stock: number; short: number
   no_record: number; availability_pct: number
 }
+interface Shortage {
+  plant_code: string; branch_name: string; province: string; area: string
+  mat_code: string; item_name: string; sales_per_day: number
+  incoming: number; depot_stock: number; days_since_trip: number; reason: string
+}
 interface Budget {
   stock_liters: number; sales_per_day: number; doh_now: number
   budget_days: number; budget_liters: number; room_liters: number
+}
+
+
+const REASON: Record<string, string> = {
+  'ของกำลังมา': 'oil',
+  'คลังมีของ เบิกได้': 'ok',
+  'คลังไม่มีของ': 'alarm',
+  'ไม่มีประวัติรถเข้า': 'alarm',
 }
 
 export default function KpiPage() {
@@ -20,17 +35,20 @@ export default function KpiPage() {
   const [budget, setBudget] = useState<Budget | null>(null)
   const [ceiling, setCeiling] = useState(20)
   const [boost, setBoost] = useState<Boost[]>([])
+  const [sh, setSh] = useState<Shortage[]>([])
+  const [q, setQ] = useState('')
 
   useEffect(() => { void load() }, [])
 
   async function load() {
-    const [k, b, s, bo] = await Promise.all([
+    const [k, b, s, bo, sd] = await Promise.all([
       supabase.from('v_kpi_daily').select('*')
         .order('snapshot_date', { ascending: false }).limit(60),
       supabase.from('v_doh_budget').select('*').maybeSingle(),
       supabase.from('settings').select('value').eq('key', 'doh_ceiling').maybeSingle(),
       supabase.from('v_booster_kpi').select('*')
         .order('snapshot_date', { ascending: false }).order('mat_code'),
+      supabase.from('v_shortage_detail').select('*').order('item_name'),
     ])
     setRows((k.data ?? []) as Kpi[])
     setBudget((b.data as Budget) ?? null)
@@ -38,6 +56,7 @@ export default function KpiPage() {
     const all = (bo.data ?? []) as Boost[]
     const day = all[0]?.snapshot_date
     setBoost(all.filter((x) => x.snapshot_date === day))
+    setSh((sd.data ?? []) as Shortage[])
   }
 
   const classA = rows.filter((r) => r.class_fix === 'Class A')
@@ -162,6 +181,80 @@ export default function KpiPage() {
             </div>
           )}
         </div>
+      )}
+
+      {sh.length > 0 && (
+        <Fold title="ของขาดรายบรรทัด" open note={`${sh.length} บรรทัด`}
+          hint="ทุกบรรทัดที่ทำให้ Availability หลุดเป้า พร้อมสาเหตุว่าติดอะไร">
+          <div className="row" style={{ marginBottom: 12 }}>
+            <input type="text" placeholder="ค้นหาสาขา สินค้า หรือจังหวัด" value={q}
+              onChange={(e) => setQ(e.target.value)} style={{ width: 270 }} />
+            <span style={{ flex: 1 }} />
+            <button className="btn ghost" onClick={() => {
+              const rows = sh.filter((x) =>
+                !q.trim() || `${x.branch_name} ${x.item_name} ${x.province}`
+                  .toLowerCase().includes(q.trim().toLowerCase()))
+              const ws = XLSX.utils.json_to_sheet(rows.map((x) => ({
+                'จังหวัด': x.province, 'ผจก.เขต': x.area,
+                'PlantCode': x.plant_code, 'สาขา': x.branch_name,
+                'รหัสสินค้า': x.mat_code, 'สินค้า': x.item_name,
+                'ขาย/วัน': x.sales_per_day, 'ของกำลังมา': x.incoming,
+                'คลังมี': x.depot_stock, 'รถไม่เข้ามา(วัน)': x.days_since_trip,
+                'สาเหตุ': x.reason,
+              })))
+              const wb = XLSX.utils.book_new()
+              XLSX.utils.book_append_sheet(wb, ws, 'ของขาด')
+              XLSX.writeFile(wb, 'ของขาด.xlsx')
+            }}>ดาวน์โหลด Excel</button>
+          </div>
+
+          <div className="row" style={{ marginBottom: 12, gap: 8 }}>
+            {Object.entries(
+              sh.reduce<Record<string, number>>((a, x) => {
+                a[x.reason] = (a[x.reason] ?? 0) + 1; return a
+              }, {})
+            ).sort((a, b) => b[1] - a[1]).map(([r, n]) => (
+              <span key={r} className={`tag ${REASON[r] ?? ''}`}>{r} {n}</span>
+            ))}
+          </div>
+
+          <div className="tw" style={{ maxHeight: '52vh' }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>สาขา</th><th>สินค้า</th>
+                  <th className="num">ขาย/วัน</th>
+                  <th className="num">กำลังมา</th><th className="num">คลังมี</th>
+                  <th className="num">รถไม่เข้า</th><th>สาเหตุ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sh.filter((x) => !q.trim() ||
+                  `${x.branch_name} ${x.item_name} ${x.province} ${x.area}`
+                    .toLowerCase().includes(q.trim().toLowerCase())
+                ).map((x, i) => (
+                  <tr key={i}>
+                    <td>{x.branch_name}</td>
+                    <td>{x.item_name}</td>
+                    <td className="num">{x.sales_per_day}</td>
+                    <td className="num" style={{ color: x.incoming ? 'var(--oil)' : 'var(--ink-3)' }}>
+                      {x.incoming || '—'}
+                    </td>
+                    <td className="num" style={{ color: x.depot_stock ? 'var(--ok)' : 'var(--alarm)' }}>
+                      {x.depot_stock || '0'}
+                    </td>
+                    <td className="num" style={{
+                      color: x.days_since_trip > 14 ? 'var(--alarm)' : 'var(--ink-3)',
+                    }}>
+                      {x.days_since_trip > 9000 ? '—' : `${x.days_since_trip} วัน`}
+                    </td>
+                    <td><span className={`tag ${REASON[x.reason] ?? ''}`}>{x.reason}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Fold>
       )}
 
       <div className="card" style={{ padding: 0 }}>
