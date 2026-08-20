@@ -22,6 +22,8 @@ interface OffT {
   coverage_pct: number; order_lines: number; order_qty: number
 }
 
+interface Incoming { source: string; lines: number; qty: number; stations: number }
+
 interface Short {
   mat_code: string; item_name: string
   requested: number; depot_stock: number; allocated: number; shortfall: number
@@ -77,10 +79,17 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
   const [kpi, setKpi] = useState<Kpi | null>(null)
   const [offT, setOffT] = useState<OffT[]>([])
   const [short, setShort] = useState<Short[]>([])
+  const [incoming, setIncoming] = useState<Incoming[]>([])
   const [off, setOff] = useState<OffAlert[]>([])
   const [only, setOnly] = useState<'order' | 'all'>('order')
 
   useEffect(() => setTripDate(snapshotDate), [snapshotDate])
+
+  useEffect(() => {
+    supabase.rpc('incoming_summary').then(({ data }) => {
+      if (Array.isArray(data)) setIncoming(data as Incoming[])
+    })
+  }, [])
 
   async function calculate() {
     setBusy(true); setErr(''); setLines([]); setRunId(null); setDiag(null); setKpi(null); setOffT([]); setShort([]); setOff([])
@@ -303,6 +312,25 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
           </button>
         </div>
         {err && <div className="note bad" style={{ marginTop: 12, whiteSpace: 'pre-line' }}>{err}</div>}
+
+        {incoming.some((i) => i.qty > 0) && (
+          <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--line)' }}>
+            <p className="hint" style={{ marginBottom: 8 }}>
+              ของระหว่างทางที่ระบบหักออกจากยอดสั่งแล้ว
+            </p>
+            <div className="row" style={{ gap: 18 }}>
+              {incoming.filter((i) => i.qty > 0).map((i) => (
+                <span key={i.source} style={{ fontSize: 12.5, color: 'var(--ink-2)' }}>
+                  {i.source}{' '}
+                  <strong style={{ fontFamily: 'var(--mono)' }}>
+                    {Number(i.qty).toLocaleString()}
+                  </strong>{' '}
+                  ชิ้น · {i.stations} สาขา
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {diag && (
