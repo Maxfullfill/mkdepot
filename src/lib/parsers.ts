@@ -200,10 +200,24 @@ export function parseMasterItem(grid: Grid): ParseResult<ItemRow> {
   return { rows: [...out.values()], skipped, warnings }
 }
 
-/* 3. ME2N — ของที่สั่งแล้วยังไม่ถึงสาขา */
+/* ────────────────────────────────────────────────────────────────────
+   3. ME2N — PO ที่เปิดไว้
+   เก็บทุกแถวรวมที่ทำรับครบแล้ว (ค้างส่ง = 0) เพราะต้องแยกให้ออกระหว่าง
+   "ME2N มีรายการนี้แต่ทำรับครบแล้ว" กับ "ME2N ยังไม่มีรายการนี้เลย"
+   สองกรณีนี้ต้องคิดต่างกันตอนกระทบยอดของระหว่างทาง
+                                                                      */
 
 export interface TransitRow {
-  plant_code: string; mat_code: string; po_no: string; qty_pcs: number
+  plant_code: string; mat_code: string; po_no: string
+  po_date: string | null
+  qty_pcs: number        // ยังค้างส่ง
+  ordered_pcs: number    // สั่งไว้ทั้งหมด
+}
+
+const toDate = (v: unknown): string | null => {
+  if (v instanceof Date) return v.toISOString().slice(0, 10)
+  if (typeof v === 'string' && /\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10)
+  return null
 }
 
 export function parseME2N(grid: Grid): ParseResult<TransitRow> {
@@ -213,25 +227,49 @@ export function parseME2N(grid: Grid): ParseResult<TransitRow> {
     plant: need(c('Plant'), 'Plant'),
     mat: need(c('Material'), 'Material'),
     po: c('Purchasing Document', 'PO'),
-    qty: need(c('Still to be delivered (qty)', 'Still to be deliv', 'Order Quantity'), 'Still to be delivered'),
+    date: c('Document Date'),
+    qty: need(c('Still to be delivered (qty)', 'Still to be deliv'), 'Still to be delivered'),
+    ord: c('Order Quantity'),
   }
   const agg = new Map<string, TransitRow>()
   let skipped = 0
+  let openLines = 0
+
   for (let r = h + 1; r < grid.length; r++) {
     const row = grid[r]; if (!row) continue
     const plant = String(row[i.plant] ?? '').trim()
     const mat = String(row[i.mat] ?? '').trim().replace(/\.0$/, '')
-    const qty = num(row[i.qty])
     if (!plant || !mat) { skipped++; continue }
-    if (qty <= 0) continue
+
+    const qty = num(row[i.qty])
     const po = i.po >= 0 ? String(row[i.po] ?? '').trim() : ''
     const k = `${plant}|${mat}|${po}`
     const prev = agg.get(k)
-    if (prev) prev.qty_pcs += qty
-    else agg.set(k, { plant_code: plant, mat_code: mat, po_no: po, qty_pcs: qty })
+    if (prev) {
+      prev.qty_pcs += qty
+      prev.ordered_pcs += i.ord >= 0 ? num(row[i.ord]) : 0
+    } else {
+      agg.set(k, {
+        plant_code: plant, mat_code: mat, po_no: po,
+        po_date: i.date >= 0 ? toDate(row[i.date]) : null,
+        qty_pcs: qty,
+        ordered_pcs: i.ord >= 0 ? num(row[i.ord]) : qty,
+      })
+    }
+    if (qty > 0) openLines++
   }
-  return { rows: [...agg.values()], skipped, warnings: [] }
+
+  const rows = [...agg.values()]
+  const warnings: string[] = []
+  const open = rows.filter((r) => r.qty_pcs > 0)
+  warnings.push(
+    `ยังค้างส่ง ${open.length} รายการ ${open.reduce((s, r) => s + r.qty_pcs, 0).toLocaleString()} ชิ้น` +
+    ` · ทำรับครบแล้ว ${rows.length - open.length} รายการ`
+  )
+  void openLines
+  return { rows, skipped, warnings }
 }
+
 
 /* ────────────────────────────────────────────────────────────────────
    4. WMS — สต็อกคลัง
