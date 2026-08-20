@@ -79,6 +79,13 @@ body {
 
 .nav { padding: 8px 14px; flex: 1; overflow-y: auto; }
 
+.nav-group { margin-bottom: 18px; }
+.nav-group:last-child { margin-bottom: 0; }
+.nav-label {
+  font-size: 12px; color: var(--ink-3); font-weight: 500;
+  padding: 0 15px 7px; letter-spacing: .03em;
+}
+
 .nav button {
   display: flex; align-items: baseline; gap: 13px; width: 100%;
   padding: 12px 15px; border: 0; background: none; cursor: pointer;
@@ -94,8 +101,15 @@ body {
 .nav button[aria-current='true'] .step { color: var(--act); opacity: .65; }
 .nav .step {
   font-family: var(--mono); font-size: 12px; color: var(--ink-3);
-  flex: none; font-weight: 400;
+  flex: none; font-weight: 400; min-width: 9px;
 }
+
+/* รายการที่กดได้ในหน้าภาพรวม */
+button.note {
+  border-width: 1px; transition: border-color .14s, background .14s, transform .07s;
+}
+button.note:hover { border-color: var(--act-soft); transform: translateX(2px); }
+button.note.bad:hover { border-color: var(--alarm); }
 
 .rail footer {
   padding: 20px 24px 0; margin-top: 10px;
@@ -357,6 +371,8 @@ td.num input { width: 74px; text-align: right; font-family: var(--mono); padding
   .brand { padding: 0 20px 16px; }
   .nav { display: flex; overflow-x: auto; padding: 0 14px 14px; gap: 6px; }
   .nav button { white-space: nowrap; width: auto; margin: 0; }
+  .nav-group { display: flex; gap: 6px; margin: 0; }
+  .nav-label { display: none; }
   .rail footer { display: flex; align-items: center; gap: 16px; padding: 14px 20px; margin: 0; }
   .rail footer > div { margin: 0 !important; }
   .rail footer button { margin: 0; }
