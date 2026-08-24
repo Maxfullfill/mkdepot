@@ -101,49 +101,52 @@ export default function App() {
     },
   ]
 
-  return (
-    <div className="shell">
-      <aside className="rail">
-        <div className="brand">
-          <h1>ระบบเติมสินค้า</h1>
-          <p>คลังแม่กลอง</p>
-        </div>
+  const flat = groups.flatMap((g, gi) =>
+    g.items.map((it, ii) => ({ ...it, group: gi, first: ii === 0 })))
 
-        <nav className="nav">
-          {groups.map((g, gi) => (
-            <div className="nav-group" key={gi}>
-              {g.label && <div className="nav-label">{g.label}</div>}
-              {g.items.map((t) => (
-                <button key={t.id} aria-current={tab === t.id} onClick={() => navigate(t.id)}>
+  return (
+    <div className="app">
+      <header className="topbar">
+        <div className="bar">
+          <div className="brand">
+            <h1>ระบบเติมสินค้า</h1>
+            <p>คลังแม่กลอง</p>
+          </div>
+
+          <nav className="topnav">
+            {flat.map((t, i) => (
+              <span key={t.id} className="navcell">
+                {t.first && i > 0 && <i className="sep" aria-hidden="true" />}
+                <button aria-current={tab === t.id} onClick={() => navigate(t.id)}>
                   {t.step && <span className="step">{t.step}</span>}
                   {t.label}
                 </button>
-              ))}
-            </div>
-          ))}
-        </nav>
+              </span>
+            ))}
+          </nav>
 
-        <footer>
-          <div>
-            {me.username}
-            {me.role === 'admin' && <span className="tag" style={{ marginLeft: 8 }}>ผู้ดูแล</span>}
+          <div className="who">
+            <span>
+              {me.username}
+              {me.role === 'admin' && <span className="tag" style={{ marginLeft: 7 }}>ผู้ดูแล</span>}
+            </span>
+            <button onClick={() => supabase.auth.signOut()}>ออก</button>
           </div>
-          <button onClick={() => supabase.auth.signOut()}>ออกจากระบบ</button>
-        </footer>
-      </aside>
+        </div>
+      </header>
 
       <main className="main">
-        {/* key=tab ทำให้ React สร้างใหม่ทุกครั้ง แอนิเมชันจึงเล่นซ้ำ */}
+        {/* key=tab ทำให้ React สร้างใหม่ แอนิเมชันจึงเล่นซ้ำ */}
         <div className="page" key={tab}>
-        {tab === 'home' && <Dashboard go={(t) => navigate(t as Tab)} />}
-        {tab === 'import' && <ImportPage snapshotDate={snapshotDate} setSnapshotDate={setSnapshotDate} />}
-        {tab === 'run' && <Run snapshotDate={snapshotDate} />}
-        {tab === 'transfer' && <Transfers snapshotDate={snapshotDate} />}
-        {tab === 'receiving' && <Receiving />}
-        {tab === 'depot' && <Depot />}
-        {tab === 'kpi' && <KpiPage />}
-        {tab === 'settings' && <Settings />}
-        {tab === 'users' && me.role === 'admin' && <Users me={me.username} />}
+          {tab === 'home' && <Dashboard go={navigate} />}
+          {tab === 'import' && <ImportPage snapshotDate={snapshotDate} setSnapshotDate={setSnapshotDate} />}
+          {tab === 'run' && <Run snapshotDate={snapshotDate} />}
+          {tab === 'transfer' && <Transfers snapshotDate={snapshotDate} />}
+          {tab === 'receiving' && <Receiving />}
+          {tab === 'depot' && <Depot />}
+          {tab === 'kpi' && <KpiPage />}
+          {tab === 'settings' && <Settings />}
+          {tab === 'users' && me.role === 'admin' && <Users me={me.username} />}
         </div>
       </main>
     </div>
