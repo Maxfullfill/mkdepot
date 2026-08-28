@@ -7,6 +7,7 @@ import Dashboard from './views/Dashboard'
 import ImportPage from './views/Import'
 import Run from './views/Run'
 import Transfers from './views/Transfers'
+import TransfersB from './views/TransfersB'
 import Depot from './views/Depot'
 import Receiving from './views/Receiving'
 import KpiPage from './views/Kpi'
@@ -18,7 +19,7 @@ const today = () => new Date().toISOString().slice(0, 10)
 type VTDoc = Document & {
   startViewTransition?: (cb: () => void) => { finished: Promise<void> }
 }
-type Tab = 'home' | 'import' | 'run' | 'transfer' | 'receiving' | 'depot' | 'kpi' | 'settings' | 'users'
+type Tab = 'home' | 'import' | 'run' | 'transfer' | 'transferB' | 'receiving' | 'depot' | 'kpi' | 'settings' | 'users'
 interface Me { username: string; role: 'staff' | 'admin'; is_active: boolean }
 interface Item { id: Tab; label: string; step?: string }
 
@@ -82,6 +83,7 @@ export default function App() {
         { id: 'import', step: '1', label: 'นำเข้าข้อมูล' },
         { id: 'run', step: '2', label: 'คำนวณยอดเติม' },
         { id: 'transfer', step: '3', label: 'โอนเกลี่ยสินค้า' },
+        { id: 'transferB', step: '4', label: 'โอนข้ามคลาส' },
       ],
     },
     {
@@ -142,6 +144,7 @@ export default function App() {
           {tab === 'import' && <ImportPage snapshotDate={snapshotDate} setSnapshotDate={setSnapshotDate} />}
           {tab === 'run' && <Run snapshotDate={snapshotDate} />}
           {tab === 'transfer' && <Transfers snapshotDate={snapshotDate} />}
+          {tab === 'transferB' && <TransfersB snapshotDate={snapshotDate} />}
           {tab === 'receiving' && <Receiving />}
           {tab === 'depot' && <Depot />}
           {tab === 'kpi' && <KpiPage />}
