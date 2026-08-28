@@ -1,70 +1,120 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
-import { StepNum } from './ui'
+import { Fold } from './ui'
 
-interface Line {
+interface TLine {
   id: number; mat_code: string; from_plant: string; to_plant: string
   area: string | null; qty: number
+  tier: string | null; from_area: string | null; to_area: string | null
   from_stock: number; from_doh: number; to_stock: number; to_doh: number
   uom: string | null; status: string; match_level: string | null
+  station_group: string | null
+  confirmed_at: string | null; days_pending?: number
   from_name?: string; to_name?: string; item_name?: string
 }
+interface Hot {
+  plant_code: string; branch_name: string; area: string
+  province: string; district: string
+  mat_code: string; item_name: string; uom: string | null
+  stock_pcs: number; sales_per_day: number; doh: number | null
+  excess_pcs: number; stock_liters: number; no_sale_30d: boolean
+}
 
-export default function TransfersB({ snapshotDate }: { snapshotDate: string }) {
+type HotKey = keyof Hot
+interface Zone {
+  area: string; mat_code: string; item_name: string
+  lines: number; stock_pcs: number; short_lines: number
+  doh: number | null; excess_pcs: number; room_pcs: number
+}
+
+export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
   const [runId, setRunId] = useState<string | null>(null)
-  const [lines, setLines] = useState<Line[]>([])
-  const [pending, setPending] = useState<Line[]>([])
+  const [lines, setLines] = useState<TLine[]>([])
+  const [hot, setHot] = useState<Hot[]>([])
+  const [zone, setZone] = useState<Zone[]>([])
   const [busy, setBusy] = useState(false)
+  const [pending, setPending] = useState<TLine[]>([])
+  const [picked, setPicked] = useState<Set<number>>(new Set())
   const [err, setErr] = useState('')
-  const [days, setDays] = useState(30)
-  const [level, setLevel] = useState(2)
-  const [msg, setMsg] = useState('')
+  const [q, setQ] = useState('')
+  const [sortKey, setSortKey] = useState<HotKey>('excess_pcs')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+  const [onlyDead, setOnlyDead] = useState(false)
 
-  useEffect(() => { void init() }, [])
+  useEffect(() => { void loadDash(); void loadPending() }, [])
 
-  async function init() {
-    const { data } = await supabase.from('settings').select('key, value')
-      .in('key', ['transfer_b_max_days', 'transfer_b_max_level'])
-    const m = Object.fromEntries((data ?? []).map((x) => [x.key, Number(x.value)]))
-    if (m.transfer_b_max_days) setDays(m.transfer_b_max_days)
-    if (m.transfer_b_max_level) setLevel(m.transfer_b_max_level)
+  /** ใบที่ยืนยันแล้วแต่ของยังไม่ถึง — ระบบหักออกจากการคำนวณรอบใหม่ให้แล้ว */
+  async function loadPending() {
+    const { data } = await supabase
+      .from('transfer_lines')
+      .select('*, items(template_descr, desc_th)')
+      .eq('status', 'ยืนยัน')
+      .order('confirmed_at', { ascending: true })
+    const names = new Map(
+      (await supabase.from('stations').select('plant_code, branch_name')).data
+        ?.map((s) => [s.plant_code as string, s.branch_name as string]) ?? []
+    )
+    setPending((data ?? []).map((r: Record<string, unknown>) => {
+      const it = r.items as { template_descr: string | null; desc_th: string | null } | null
+      const l = r as unknown as TLine
+      const days = l.confirmed_at
+        ? Math.floor((Date.now() - new Date(l.confirmed_at).getTime()) / 86400000) : 0
+      return {
+        ...l,
+        from_name: names.get(l.from_plant) ?? l.from_plant,
+        to_name: names.get(l.to_plant) ?? l.to_plant,
+        item_name: it?.template_descr ?? it?.desc_th ?? l.mat_code,
+        days_pending: days,
+      }
+    }))
+  }
+
+  async function confirmRun() {
+    if (!runId) return
+    const keep = active.map((l) => l.id)
+    // ตัดที่ไม่เอาออกก่อน แล้วยืนยันที่เหลือ
+    const drop = lines.filter((l) => !keep.includes(l.id)).map((l) => l.id)
+    if (drop.length) await supabase.from('transfer_lines')
+      .update({ status: 'ยกเลิก' }).in('id', drop)
+    const { error } = await supabase.rpc('confirm_transfer_run', {
+      p_run_id: runId,
+      p_by: (await supabase.auth.getUser()).data.user?.id ?? null,
+    })
+    if (error) { setErr(error.message); return }
+    await Promise.all([loadLines(runId), loadPending()])
+  }
+
+  async function receivePicked() {
+    if (!picked.size) return
+    const { error } = await supabase.rpc('receive_transfer_lines',
+      { p_ids: [...picked] })
+    if (error) { setErr(error.message); return }
+    setPicked(new Set())
     await loadPending()
   }
 
-  const flash = (t: string) => { setMsg(t); setTimeout(() => setMsg(''), 2000) }
-
-  async function names() {
-    const { data } = await supabase.from('stations').select('plant_code, branch_name')
-    return new Map((data ?? []).map((s) => [s.plant_code as string, s.branch_name as string]))
-  }
-
-  function shape(rows: Record<string, unknown>[], nm: Map<string, string>): Line[] {
-    return rows.map((r) => {
-      const it = r.items as { template_descr: string | null; desc_th: string | null } | null
-      const l = r as unknown as Line
-      return {
-        ...l,
-        from_name: nm.get(l.from_plant) ?? l.from_plant,
-        to_name: nm.get(l.to_plant) ?? l.to_plant,
-        item_name: it?.template_descr ?? it?.desc_th ?? l.mat_code,
-      }
+  function togglePick(id: number) {
+    setPicked((p) => {
+      const n = new Set(p)
+      n.has(id) ? n.delete(id) : n.add(id)
+      return n
     })
   }
 
-  async function loadPending() {
-    const nm = await names()
-    const { data } = await supabase
-      .from('transfer_lines')
-      .select('*, items(template_descr, desc_th), transfer_runs!inner(kind)')
-      .eq('status', 'ยืนยัน').eq('to_class', 'Class B')
-    setPending(shape((data ?? []) as Record<string, unknown>[], nm))
+  async function loadDash() {
+    const [h, z] = await Promise.all([
+      supabase.from('v_doh_hotspot').select('*').order('excess_pcs', { ascending: false }).limit(3000),
+      supabase.from('v_zone_balance').select('*'),
+    ])
+    setHot((h.data ?? []) as Hot[])
+    setZone((z.data ?? []) as Zone[])
   }
 
   async function run() {
     setBusy(true); setErr(''); setLines([]); setRunId(null)
     try {
-      const { data, error } = await supabase.rpc('calculate_transfers_b', {
+      const { data, error } = await supabase.rpc('calculate_transfers', {
         p_snapshot_date: snapshotDate,
         p_created_by: (await supabase.auth.getUser()).data.user?.id ?? null,
       })
@@ -77,19 +127,25 @@ export default function TransfersB({ snapshotDate }: { snapshotDate: string }) {
   }
 
   async function loadLines(id: string) {
-    const nm = await names()
     const { data, error } = await supabase
-      .from('transfer_lines').select('*, items(template_descr, desc_th)')
-      .eq('run_id', id).order('match_level').order('mat_code')
+      .from('transfer_lines')
+      .select('*, items(template_descr, desc_th)')
+      .eq('run_id', id).order('area').order('mat_code')
     if (error) { setErr(error.message); return }
-    setLines(shape((data ?? []) as Record<string, unknown>[], nm))
-  }
-
-  async function save(key: string, v: number | null, set: (n: number) => void) {
-    if (v === null) return
-    set(v)
-    await supabase.from('settings').update({ value: v }).eq('key', key)
-    flash('บันทึกแล้ว')
+    const names = new Map(
+      (await supabase.from('stations').select('plant_code, branch_name')).data
+        ?.map((s) => [s.plant_code as string, s.branch_name as string]) ?? []
+    )
+    setLines((data ?? []).map((r: Record<string, unknown>) => {
+      const it = r.items as { template_descr: string | null; desc_th: string | null } | null
+      const l = r as unknown as TLine
+      return {
+        ...l,
+        from_name: names.get(l.from_plant) ?? l.from_plant,
+        to_name: names.get(l.to_plant) ?? l.to_plant,
+        item_name: it?.template_descr ?? it?.desc_th ?? l.mat_code,
+      }
+    }))
   }
 
   async function setStatus(id: number, status: string) {
@@ -99,105 +155,184 @@ export default function TransfersB({ snapshotDate }: { snapshotDate: string }) {
 
   const active = useMemo(() => lines.filter((l) => l.status !== 'ยกเลิก'), [lines])
 
-  async function confirmRun() {
-    if (!runId) return
-    const drop = lines.filter((l) => l.status === 'ยกเลิก').map((l) => l.id)
-    if (drop.length) await supabase.from('transfer_lines')
-      .update({ status: 'ยกเลิก' }).in('id', drop)
-    const { error } = await supabase.rpc('confirm_transfer_run', {
-      p_run_id: runId,
-      p_by: (await supabase.auth.getUser()).data.user?.id ?? null,
-    })
-    if (error) { setErr(error.message); return }
-    await Promise.all([loadLines(runId), loadPending()])
-    flash('ยืนยันแล้ว')
-  }
+  const summary = useMemo(() => ({
+    qty: active.reduce((s, l) => s + l.qty, 0),
+    pairs: new Set(active.map((l) => `${l.from_plant}>${l.to_plant}`)).size,
+    areas: new Set(active.map((l) => l.area)).size,
+    byTier: active.reduce<Record<string, number>>((a, l) => {
+      const k = l.tier ?? '—'; a[k] = (a[k] ?? 0) + l.qty; return a
+    }, {}),
+  }), [active])
 
-  function exportRows() {
+  function exportTransfers() {
     if (!active.length) return
     const ws = XLSX.utils.json_to_sheet(active.map((l) => ({
-      'ชั้นที่จับคู่': l.match_level,
-      'ผจก.เขต': l.area,
-      'สาขาต้นทาง (Class A)': l.from_name,
+      'ระยะ': l.tier,
+      'กลุ่ม': l.area,
+      'สาขาต้นทาง': l.from_name,
       'รหัสต้นทาง': l.from_plant,
       'DOH ต้นทาง': l.from_doh,
-      'สาขาปลายทาง (Class B)': l.to_name,
+      'สาขาปลายทาง': l.to_name,
       'รหัสปลายทาง': l.to_plant,
+      'DOH ปลายทาง': l.to_doh,
       'รหัสสินค้า': l.mat_code,
       'สินค้า': l.item_name,
       'จำนวนโอน': l.qty,
       'หน่วย': l.uom,
     })))
     const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'โอนข้ามคลาส')
-    XLSX.writeFile(wb, `โอนข้ามคลาส_${snapshotDate.replace(/-/g, '')}.xlsx`)
+    XLSX.utils.book_append_sheet(wb, ws, 'โอนเกลี่ย')
+    XLSX.writeFile(wb, `โอนเกลี่ย_${snapshotDate.replace(/-/g, '')}.xlsx`)
   }
 
-  const sum = useMemo(() => ({
-    qty: active.reduce((s, l) => s + l.qty, 0),
-    to: new Set(active.map((l) => l.to_plant)).size,
-    from: new Set(active.map((l) => l.from_plant)).size,
-    amphoe: active.filter((l) => l.match_level === 'อำเภอ').length,
-  }), [active])
+  /** กดหัวคอลัมน์เพื่อเรียง กดซ้ำเพื่อสลับมากสุด/น้อยสุด */
+  function sortBy(k: HotKey) {
+    if (k === sortKey) setSortDir(sortDir === 'desc' ? 'asc' : 'desc')
+    else { setSortKey(k); setSortDir(typeof hot[0]?.[k] === 'number' ? 'desc' : 'asc') }
+  }
+
+  const shownHot = useMemo(() => {
+    const t = q.trim().toLowerCase()
+    let rows = hot
+    if (t) rows = rows.filter((h) =>
+      `${h.branch_name} ${h.item_name} ${h.area} ${h.province} ${h.district} ${h.mat_code}`
+        .toLowerCase().includes(t))
+    if (onlyDead) rows = rows.filter((h) => h.no_sale_30d)
+    const dir = sortDir === 'asc' ? 1 : -1
+    return [...rows].sort((a, b) => {
+      const x = a[sortKey], y = b[sortKey]
+      if (x === null || x === undefined) return 1
+      if (y === null || y === undefined) return -1
+      if (typeof x === 'number' && typeof y === 'number') return (x - y) * dir
+      return String(x).localeCompare(String(y), 'th') * dir
+    })
+  }, [hot, q, sortKey, sortDir, onlyDead])
+
+  function exportHot() {
+    if (!shownHot.length) return
+    const ws = XLSX.utils.json_to_sheet(shownHot.map((h) => ({
+      'จังหวัด': h.province,
+      'อำเภอ': h.district,
+      'ผจก.เขต': h.area,
+      'PlantCode': h.plant_code,
+      'สาขา': h.branch_name,
+      'รหัสสินค้า': h.mat_code,
+      'สินค้า': h.item_name,
+      'คงเหลือ': h.stock_pcs,
+      'หน่วย': h.uom,
+      'ขาย/วัน': h.sales_per_day,
+      'DOH': h.doh,
+      'ของเกิน': h.excess_pcs,
+      'ลิตร': h.stock_liters,
+      'ไม่ขายเลย 30 วัน': h.no_sale_30d ? 'ใช่' : '',
+    })))
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'ของกอง')
+    XLSX.writeFile(wb, `ของกอง_${snapshotDate.replace(/-/g, '')}.xlsx`)
+  }
+
+  // จับคู่ข้ามเขต: SKU ที่เขตหนึ่งล้น อีกเขตยังมีที่ว่าง
+  const crossPairs = useMemo(() => {
+    const byMat = new Map<string, Zone[]>()
+    zone.forEach((z) => {
+      if (!byMat.has(z.mat_code)) byMat.set(z.mat_code, [])
+      byMat.get(z.mat_code)!.push(z)
+    })
+    const out: { item: string; from: Zone; to: Zone; qty: number }[] = []
+    byMat.forEach((zs) => {
+      const donors = zs.filter((z) => z.excess_pcs > 0).sort((a, b) => b.excess_pcs - a.excess_pcs)
+      const takers = zs.filter((z) => z.room_pcs > 0 || z.short_lines > 0)
+        .sort((a, b) => b.short_lines - a.short_lines || b.room_pcs - a.room_pcs)
+      donors.forEach((d) => takers.forEach((t) => {
+        if (d.area === t.area) return
+        const qty = Math.min(d.excess_pcs, Math.max(t.room_pcs, t.short_lines))
+        if (qty >= 5) out.push({ item: d.item_name, from: d, to: t, qty })
+      }))
+    })
+    return out.sort((a, b) => b.qty - a.qty).slice(0, 40)
+  }, [zone])
+
+  const totalExcess = hot.reduce((s, h) => s + h.excess_pcs, 0)
+  const deadLines = hot.filter((h) => h.no_sale_30d)
 
   return (
     <>
-      <h2>โอนข้ามคลาส</h2>
+      <h2>โอนเกลี่ยสินค้า</h2>
       <p className="lede">
-        เอาของเกินจากสาขาที่สินค้าเป็น Class A ไปเติมสาขาที่สินค้าเป็น Class B และของหมด
-        แต่ยังขายได้ · จำกัดไม่เกินยอดขาย {days} วัน และไม่ข้ามเขต
+        เอาของเกินจากสาขาหนึ่งไปอุดสาขาที่ขาด แทนการเบิกใหม่จากคลัง
+        ของในเครือข่ายไม่เพิ่ม DOH จึงค่อย ๆ ลงตามยอดขาย ·
+        จับคู่ไล่จากใกล้ไปไกล อำเภอ → จังหวัด → เขตผู้จัดการ → ข้ามเขต ·
+        เฉพาะ Class A ไม่รวมหัวเชื้อ
       </p>
-
-      <div className="card">
-        <h3>เงื่อนไข</h3>
-        <div className="row" style={{ gap: 24 }}>
-          <span style={{ display: 'flex', gap: 9, alignItems: 'center' }}>
-            <label>โอนได้ไม่เกิน</label>
-            <StepNum value={days} step={5} min={5} max={90}
-              onChange={(v) => save('transfer_b_max_days', v, setDays)} />
-            <span style={{ fontSize: 13, color: 'var(--ink-3)' }}>วันของยอดขาย</span>
-          </span>
-          <span style={{ display: 'flex', gap: 9, alignItems: 'center' }}>
-            <label>ขอบเขต</label>
-            <select value={level}
-              onChange={(e) => save('transfer_b_max_level', Number(e.target.value), setLevel)}>
-              <option value={1}>อำเภอเดียวกันเท่านั้น</option>
-              <option value={2}>ถึงจังหวัดเดียวกัน</option>
-            </select>
-          </span>
-        </div>
-        <p className="hint" style={{ margin: '14px 0 0' }}>
-          ปลายทางต้องเป็น Class B · สต็อกเป็น 0 · ยังมียอดขาย ·
-          ต้นทางใช้กติกาเดิม DOH เกินเกณฑ์และโอนแล้วยังพอถึงรอบหน้า ·
-          ของที่หน้าโอนหลักเสนอไว้แล้วจะถูกหักออก ไม่เสนอซ้ำ
-        </p>
-      </div>
 
       {pending.length > 0 && (
         <div className="card">
-          <h3>ของระหว่างโอน</h3>
-          <p className="hint">ยืนยันแล้วยังไม่ได้รับ · กดรับของที่หน้าโอนหลัก</p>
-          <div className="row" style={{ gap: 20 }}>
-            <span>{pending.length} รายการ</span>
-            <span>{pending.reduce((s, l) => s + l.qty, 0).toLocaleString()} ชิ้น</span>
-            <span>{new Set(pending.map((l) => l.to_plant)).size} สาขาปลายทาง</span>
+          <div className="spread">
+            <div>
+              <h3>ของระหว่างโอน</h3>
+              <p className="hint" style={{ marginBottom: 0 }}>
+                ยืนยันแล้วแต่ยังไม่ได้รับ — ระบบหักออกจากการคำนวณรอบใหม่ให้แล้ว
+                จึงไม่เสนอโอนซ้ำ · ติ๊กแล้วกดรับของเมื่อของถึงปลายทาง
+              </p>
+            </div>
+            {picked.size > 0 && (
+              <button className="btn" onClick={receivePicked}>
+                รับของ {picked.size} รายการ
+              </button>
+            )}
           </div>
+          <div className="tw" style={{ maxHeight: '34vh', marginTop: 14 }}>
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ width: 34 }}></th>
+                  <th>สินค้า</th><th>ต้นทาง</th><th>ปลายทาง</th>
+                  <th className="num">จำนวน</th><th className="num">ค้างมา</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pending.map((l) => (
+                  <tr key={l.id}>
+                    <td>
+                      <input type="checkbox" checked={picked.has(l.id)}
+                        onChange={() => togglePick(l.id)} />
+                    </td>
+                    <td>{l.item_name}</td>
+                    <td>{l.from_name}</td>
+                    <td>{l.to_name}</td>
+                    <td className="num"><strong>{l.qty}</strong></td>
+                    <td className="num" style={{
+                      color: (l.days_pending ?? 0) > 10 ? 'var(--alarm)' : 'var(--ink-3)',
+                    }}>
+                      {l.days_pending} วัน
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {pending.some((l) => (l.days_pending ?? 0) > 10) && (
+            <div className="note bad" style={{ marginTop: 12 }}>
+              มีใบค้างเกิน 10 วัน — ถ้าของถึงแล้วให้กดรับของ
+              ระบบจะเลิกนับเองเมื่อครบ 14 วัน เพื่อกันตัวเลขซ้ำ
+            </div>
+          )}
         </div>
       )}
 
       <div className="card">
         <div className="row">
           <button className="btn" onClick={run} disabled={busy}>
-            {busy ? 'กำลังคำนวณ…' : 'คำนวณรายการโอนข้ามคลาส'}
+            {busy ? 'กำลังคำนวณ…' : 'คำนวณรายการโอน'}
           </button>
-          <span style={{ fontSize: 13, color: 'var(--ink-3)' }}>ใช้สต็อก ณ {snapshotDate}</span>
+          <span style={{ fontSize: 12.5, color: 'var(--ink-3)' }}>ใช้สต็อก ณ {snapshotDate}</span>
           {active.length > 0 && (
             <>
               <span style={{ flex: 1 }} />
-              <button className="btn ghost" onClick={exportRows}>ดาวน์โหลดใบโอน</button>
+              <button className="btn ghost" onClick={exportTransfers}>ดาวน์โหลดใบโอน</button>
               {active.some((l) => l.status === 'เสนอ') && (
                 <button className="btn" onClick={confirmRun}>
-                  ยืนยัน {active.filter((l) => l.status === 'เสนอ').length} รายการ
+                  ยืนยันสั่งโอน {active.filter((l) => l.status === 'เสนอ').length} รายการ
                 </button>
               )}
             </>
@@ -206,8 +341,8 @@ export default function TransfersB({ snapshotDate }: { snapshotDate: string }) {
         {err && <div className="note bad" style={{ marginTop: 12 }}>{err}</div>}
         {runId && lines.length === 0 && !busy && (
           <div className="note" style={{ marginTop: 12 }}>
-            ไม่มีคู่ที่โอนได้ — อาจเพราะของเกินถูกจองไปกับหน้าโอนหลักแล้ว
-            หรือไม่มี Class B ที่ของหมดในอำเภอ/จังหวัดเดียวกับสาขาที่มีของเกิน
+            ไม่มีคู่ที่โอนกันได้ภายใต้ผู้จัดการเขตคนเดียวกัน — สาขาในเขตมีสถานะคล้ายกันหมด
+            ลองดูตารางจับคู่ข้ามเขตด้านล่าง
           </div>
         )}
       </div>
@@ -215,26 +350,23 @@ export default function TransfersB({ snapshotDate }: { snapshotDate: string }) {
       {active.length > 0 && (
         <>
           <dl className="stats">
-            <div className="stat"><dt>รายการ</dt><dd>{active.length}</dd></div>
-            <div className="stat">
-              <dt>รวมจำนวน</dt><dd>{sum.qty.toLocaleString()} <small>ชิ้น</small></dd>
-            </div>
-            <div className="stat"><dt>สาขาที่ได้ของ</dt><dd>{sum.to}</dd></div>
-            <div className="stat">
-              <dt>ในอำเภอ / จังหวัด</dt>
-              <dd style={{ fontSize: 26 }}>
-                {sum.amphoe} / {active.length - sum.amphoe}
-              </dd>
-            </div>
+            <div className="stat"><dt>รายการโอน</dt><dd>{active.length}</dd></div>
+            <div className="stat"><dt>รวมจำนวน</dt><dd>{summary.qty.toLocaleString()} <small>ชิ้น</small></dd></div>
+            <div className="stat"><dt>คู่สาขา</dt><dd>{summary.pairs}</dd></div>
+            <div className="stat"><dt>กลุ่มที่เกี่ยวข้อง</dt><dd>{summary.areas}</dd></div>
           </dl>
 
-          <div className="tw">
+          <div className="note" style={{ marginBottom: 12 }}>
+            แยกตามระยะ: {Object.entries(summary.byTier).map(([k, v]) => `${k} ${v} ชิ้น`).join(' · ')}
+          </div>
+
+          <div className="tw" style={{ marginBottom: 20 }}>
             <table>
               <thead>
                 <tr>
-                  <th>ชั้น</th><th>สินค้า</th>
-                  <th>ต้นทาง · Class A</th><th className="num">DOH</th>
-                  <th>ปลายทาง · Class B</th><th className="num">ขาย/วัน</th>
+                  <th>ระยะ</th><th>กลุ่ม</th><th>สินค้า</th>
+                  <th>ต้นทาง</th><th className="num">DOH</th>
+                  <th>ปลายทาง</th><th className="num">DOH</th>
                   <th className="num">โอน</th><th></th>
                 </tr>
               </thead>
@@ -242,16 +374,17 @@ export default function TransfersB({ snapshotDate }: { snapshotDate: string }) {
                 {lines.map((l) => (
                   <tr key={l.id} style={{ opacity: l.status === 'ยกเลิก' ? 0.4 : 1 }}>
                     <td>
-                      <span className={`tag ${l.match_level === 'อำเภอ' ? 'ok' : ''}`}>
-                        {l.match_level}
+                      <span className={`tag ${l.tier === 'อำเภอ' ? 'ok' : l.tier === 'จังหวัด' ? '' : 'oil'}`}>
+                        {l.tier ?? '—'}
                       </span>
                     </td>
+                    <td style={{ color: 'var(--ink-2)', fontSize: 12.5 }}>{l.area}</td>
                     <td>{l.item_name}</td>
                     <td>{l.from_name}</td>
                     <td className="num" style={{ color: 'var(--oil)' }}>{l.from_doh}</td>
                     <td>{l.to_name}</td>
-                    <td className="num" style={{ color: 'var(--ink-3)' }}>
-                      {l.to_doh ?? '—'}
+                    <td className="num" style={{ color: l.to_stock <= 0 ? 'var(--alarm)' : undefined }}>
+                      {l.to_stock <= 0 ? 'ขาด' : l.to_doh}
                     </td>
                     <td className="num"><strong>{l.qty}</strong></td>
                     <td>
@@ -269,15 +402,122 @@ export default function TransfersB({ snapshotDate }: { snapshotDate: string }) {
               </tbody>
             </table>
           </div>
-
-          <div className="note" style={{ marginTop: 16 }}>
-            การโอนแบบนี้ไม่ได้ลดของในเครือข่าย แต่ย้ายของไปอยู่ที่ที่ขายออก —
-            DOH จะลดลงตามยอดขายที่เกิดขึ้นจริง และสาขาปลายทางกลับมามีของขาย
-          </div>
         </>
       )}
 
-      {msg && <div className="note good" style={{ position: 'sticky', bottom: 16, marginTop: 14 }}>{msg}</div>}
+      <Fold title="จับคู่ข้ามจังหวัด" note={`${crossPairs.length} คู่ที่เป็นไปได้`}
+        hint="SKU ที่จังหวัดหนึ่งกองอยู่ แต่อีกจังหวัดมีสาขาขาด — ใช้ตัดสินใจโอนข้ามจังหวัดเอง">
+        {crossPairs.length === 0 ? (
+          <div className="note">ไม่มีคู่ข้ามเขตที่ชัดเจน</div>
+        ) : (
+          <div className="tw" style={{ maxHeight: '46vh' }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>สินค้า</th>
+                  <th>จังหวัดต้นทาง</th><th className="num">DOH</th><th className="num">ของเกิน</th>
+                  <th>จังหวัดปลายทาง</th><th className="num">DOH</th><th className="num">สาขาขาด</th>
+                  <th className="num">โอนได้</th>
+                </tr>
+              </thead>
+              <tbody>
+                {crossPairs.map((p, i) => (
+                  <tr key={i}>
+                    <td>{p.item}</td>
+                    <td><span className="tag oil">{p.from.area}</span></td>
+                    <td className="num" style={{ color: 'var(--oil)' }}>{p.from.doh ?? '—'}</td>
+                    <td className="num">{p.from.excess_pcs}</td>
+                    <td><span className="tag ok">{p.to.area}</span></td>
+                    <td className="num">{p.to.doh ?? '—'}</td>
+                    <td className="num" style={{ color: p.to.short_lines ? 'var(--alarm)' : undefined }}>
+                      {p.to.short_lines || '—'}
+                    </td>
+                    <td className="num"><strong>{p.qty}</strong></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Fold>
+
+      <Fold title="ของกองรายสาขา"
+        note={`${hot.length} บรรทัด · เกิน ${totalExcess.toLocaleString()} ชิ้น`}
+        hint="กดหัวคอลัมน์เพื่อเรียง กดซ้ำเพื่อสลับมากสุด/น้อยสุด">
+        <div className="row" style={{ marginBottom: 10 }}>
+          <input type="text" placeholder="ค้นหาสาขา สินค้า จังหวัด หรือ ผจก." value={q}
+            onChange={(e) => setQ(e.target.value)} style={{ width: 260 }} />
+          <label style={{ display: 'flex', gap: 7, alignItems: 'center', cursor: 'pointer', fontSize: 13 }}>
+            <input type="checkbox" checked={onlyDead} onChange={(e) => setOnlyDead(e.target.checked)} />
+            เฉพาะที่ไม่ขายเลย 30 วัน
+          </label>
+          <span style={{ fontSize: 12.5, color: 'var(--ink-3)' }}>
+            {shownHot.length} รายการ · เกินรวม{' '}
+            {shownHot.reduce((s, h) => s + h.excess_pcs, 0).toLocaleString()} ชิ้น
+          </span>
+          <span style={{ flex: 1 }} />
+          <button className="btn ghost" onClick={exportHot} disabled={!shownHot.length}>
+            ดาวน์โหลด Excel
+          </button>
+        </div>
+        <div className="tw" style={{ maxHeight: '58vh' }}>
+          <table>
+            <thead>
+              <tr>
+                {([
+                  ['province', 'จังหวัด', false],
+                  ['district', 'อำเภอ', false],
+                  ['area', 'ผจก.เขต', false],
+                  ['branch_name', 'สาขา', false],
+                  ['item_name', 'สินค้า', false],
+                  ['stock_pcs', 'คงเหลือ', true],
+                  ['sales_per_day', 'ขาย/วัน', true],
+                  ['doh', 'DOH', true],
+                  ['excess_pcs', 'ของเกิน', true],
+                  ['stock_liters', 'ลิตร', true],
+                ] as [HotKey, string, boolean][]).map(([k, label, num]) => (
+                  <th key={k} className={num ? 'num' : undefined}
+                    style={{ cursor: 'pointer', userSelect: 'none' }}
+                    onClick={() => sortBy(k)}
+                    title="กดเพื่อเรียง">
+                    {label}
+                    {sortKey === k && (
+                      <span style={{ marginLeft: 4, color: 'var(--act)' }}>
+                        {sortDir === 'desc' ? '▼' : '▲'}
+                      </span>
+                    )}
+                  </th>
+                ))}
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {shownHot.slice(0, 800).map((h, i) => (
+                <tr key={i}>
+                  <td style={{ fontSize: 12.5 }}>{h.province?.replace('จังหวัด', '')}</td>
+                  <td style={{ fontSize: 12.5, color: 'var(--ink-2)' }}>
+                    {h.district?.replace(/^อำเภอ|^เขต/, '')}
+                  </td>
+                  <td><span className="tag">{h.area}</span></td>
+                  <td>{h.branch_name}</td>
+                  <td>{h.item_name}</td>
+                  <td className="num">{h.stock_pcs}</td>
+                  <td className="num">{h.sales_per_day?.toFixed(2)}</td>
+                  <td className="num" style={{ color: 'var(--oil)' }}>{h.doh ?? '∞'}</td>
+                  <td className="num"><strong>{h.excess_pcs}</strong></td>
+                  <td className="num" style={{ color: 'var(--ink-3)' }}>{h.stock_liters}</td>
+                  <td>{h.no_sale_30d && <span className="tag alarm">ไม่ขายเลย</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {shownHot.length > 800 && (
+          <p className="hint" style={{ marginTop: 8 }}>
+            แสดง 800 แถวแรกจาก {shownHot.length} — ดาวน์โหลด Excel เพื่อดูครบ
+          </p>
+        )}
+      </Fold>
     </>
   )
 }
