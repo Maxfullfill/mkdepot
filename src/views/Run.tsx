@@ -22,6 +22,28 @@ interface OffT {
   coverage_pct: number; order_lines: number; order_qty: number
 }
 
+interface Meta {
+  run_id: string; created_at: string; snapshot_date: string
+  line_count: number; exported: boolean
+  data_changed: boolean; changed_at: string | null
+}
+interface ShortAfter {
+  plant_code: string; branch_name: string; province: string; area: string
+  mat_code: string; item_name: string; sales_per_day: number
+  incoming: number; depot_stock: number; days_since_trip: number
+  on_trip: boolean; reason: string
+}
+
+interface Rem {
+  plant_code: string; branch_name: string; province: string
+  mat_code: string; item_name: string; sales_per_day: number
+  incoming: number; depot_stock: number; days_since_trip: number; reason: string
+}
+interface RunInfo {
+  found: boolean; run_id?: string; created_at?: string; snapshot_date?: string
+  exported?: boolean; lines?: number; stale?: boolean; reasons?: string[]
+}
+
 interface Incoming { source: string; lines: number; qty: number; stations: number }
 
 interface Short {
@@ -80,16 +102,65 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
   const [offT, setOffT] = useState<OffT[]>([])
   const [short, setShort] = useState<Short[]>([])
   const [incoming, setIncoming] = useState<Incoming[]>([])
+  const [rem, setRem] = useState<Rem[]>([])
+  const [info, setInfo] = useState<RunInfo | null>(null)
+  const [showRem, setShowRem] = useState(false)
+  const [meta, setMeta] = useState<Meta | null>(null)
+  const [after, setAfter] = useState<ShortAfter[]>([])
   const [off, setOff] = useState<OffAlert[]>([])
   const [only, setOnly] = useState<'order' | 'all'>('order')
 
   useEffect(() => setTripDate(snapshotDate), [snapshotDate])
+
+  /** เปิดหน้ามาแล้วโหลดผลรอบล่าสุดของวันนั้นเลย ไม่ต้องกดคำนวณใหม่
+   *  จะกดใหม่ก็ต่อเมื่อข้อมูลเปลี่ยนหรืออยากคำนวณซ้ำ */
+  useEffect(() => {
+    let dead = false
+    setMeta(null); setLines([]); setKpi(null); setOffT([]); setShort([]); setAfter([])
+    supabase.rpc('latest_run_for', { p_trip_date: tripDate }).then(async ({ data }) => {
+      if (dead || !Array.isArray(data) || !data.length) return
+      const m = data[0] as Meta
+      setMeta(m)
+      setRunId(m.run_id)
+      await loadAll(m.run_id)
+    })
+    return () => { dead = true }
+  }, [tripDate])
 
   useEffect(() => {
     supabase.rpc('incoming_summary').then(({ data }) => {
       if (Array.isArray(data)) setIncoming(data as Incoming[])
     })
   }, [])
+
+  /** เปิดหน้ามาแล้วโหลดผลคำนวณเดิมของวันนั้นเลย ไม่ต้องกดใหม่ */
+  useEffect(() => {
+    let dead = false
+    setLines([]); setRunId(null); setKpi(null); setOffT([]); setShort([]); setRem([])
+    supabase.rpc('latest_run', { p_trip_date: tripDate }).then(async ({ data }) => {
+      if (dead) return
+      const r = (data as RunInfo) ?? { found: false }
+      setInfo(r)
+      if (!r.found || !r.run_id) return
+      setRunId(r.run_id)
+      const n = await load(r.run_id)
+      if (n > 0) await loadExtras(r.run_id)
+    })
+    return () => { dead = true }
+  }, [tripDate])
+
+  async function loadExtras(id: string) {
+    const [{ data: k }, { data: o }, { data: sh }, { data: rm }] = await Promise.all([
+      supabase.rpc('kpi_for_run', { p_run_id: id }),
+      supabase.rpc('offtemplate_alert', { p_run_id: id }),
+      supabase.rpc('depot_shortage', { p_run_id: id }),
+      supabase.rpc('remaining_short', { p_run_id: id }),
+    ])
+    if (Array.isArray(k) && k.length) setKpi(k[0] as Kpi)
+    if (Array.isArray(o)) setOffT(o as OffT[])
+    if (Array.isArray(sh)) setShort(sh as Short[])
+    if (Array.isArray(rm)) setRem(rm as Rem[])
+  }
 
   async function calculate() {
     setBusy(true); setErr(''); setLines([]); setRunId(null); setDiag(null); setKpi(null); setOffT([]); setShort([]); setOff([])
@@ -101,6 +172,7 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
       })
       if (error) throw new Error(error.message)
       setRunId(data as string)
+      setMeta(null)
       const n = await load(data as string)
       if (n === 0) await explainEmpty()
       else {
@@ -115,6 +187,22 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
     } finally { setBusy(false) }
+  }
+
+  /** โหลดผลของรอบที่คำนวณไว้แล้ว */
+  async function loadAll(id: string) {
+    const n = await load(id)
+    if (n === 0) return
+    const [{ data: k }, { data: o }, { data: sh }, { data: af }] = await Promise.all([
+      supabase.rpc('kpi_for_run', { p_run_id: id }),
+      supabase.rpc('offtemplate_alert', { p_run_id: id }),
+      supabase.rpc('depot_shortage', { p_run_id: id }),
+      supabase.rpc('short_after_run', { p_run_id: id }),
+    ])
+    if (Array.isArray(k) && k.length) setKpi(k[0] as Kpi)
+    if (Array.isArray(o)) setOffT(o as OffT[])
+    if (Array.isArray(sh)) setShort(sh as Short[])
+    if (Array.isArray(af)) setAfter(af as ShortAfter[])
   }
 
   async function load(id: string) {
@@ -307,10 +395,50 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
           <label style={{ fontSize: 13 }}>รถออกวันที่</label>
           <input type="date" value={tripDate} onChange={(e) => setTripDate(e.target.value)} />
           <span style={{ color: 'var(--ink-3)', fontSize: 12.5 }}>ใช้สต็อก ณ {snapshotDate}</span>
-          <button className="btn" onClick={calculate} disabled={busy}>
-            {busy ? 'กำลังคำนวณ…' : 'คำนวณ'}
+          <button className={`btn ${meta && !meta.data_changed ? 'ghost' : ''}`}
+            onClick={calculate} disabled={busy}>
+            {busy ? 'กำลังคำนวณ…' : meta ? 'คำนวณใหม่' : 'คำนวณ'}
           </button>
         </div>
+        {meta && (
+          <div className={`note ${meta.data_changed ? 'bad' : ''}`} style={{ marginTop: 12 }}>
+            {meta.data_changed ? (
+              <>มีการนำเข้าข้อมูลใหม่หลังคำนวณรอบนี้ — ควรกดคำนวณใหม่เพื่อให้ตัวเลขตรงกับข้อมูลล่าสุด</>
+            ) : (
+              <>
+                ผลจากรอบที่คำนวณเมื่อ{' '}
+                {new Date(meta.created_at).toLocaleString('th-TH', {
+                  day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+                })}
+                {' · '}{meta.line_count} บรรทัด
+                {meta.exported ? ' · ออกไฟล์แล้ว' : ' · ยังไม่ได้ออกไฟล์'}
+                {' — ข้อมูลยังไม่เปลี่ยน ไม่ต้องคำนวณใหม่'}
+              </>
+            )}
+          </div>
+        )}
+
+        {info?.found && (
+          <div className={`note ${info.stale ? 'bad' : 'good'}`} style={{ marginTop: 12 }}>
+            {info.stale ? (
+              <>
+                ข้อมูลเปลี่ยนไปหลังคำนวณครั้งล่าสุด — {(info.reasons ?? []).join(' · ')}
+                {' '}ควรกดคำนวณใหม่
+              </>
+            ) : (
+              <>
+                ใช้ผลคำนวณเมื่อ{' '}
+                {new Date(info.created_at!).toLocaleString('th-TH', {
+                  day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+                })}
+                {' · '}{info.lines} บรรทัด
+                {info.exported ? ' · ออกไฟล์แล้ว' : ' · ยังไม่ได้ออกไฟล์'}
+                {' · ข้อมูลยังไม่เปลี่ยน ไม่ต้องคำนวณใหม่'}
+              </>
+            )}
+          </div>
+        )}
+
         {err && <div className="note bad" style={{ marginTop: 12, whiteSpace: 'pre-line' }}>{err}</div>}
 
         {incoming.some((i) => i.qty > 0) && (
@@ -366,8 +494,10 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
                 {kpi ? kpi.avail_after?.toFixed(1) : '—'}<small>%</small>
               </dd>
             </div>
-            <div className="stat">
-              <dt>ยังขาดหลังส่ง</dt>
+            <div className="stat"
+              style={{ cursor: rem.length ? 'pointer' : undefined }}
+              onClick={() => rem.length && setShowRem(!showRem)}>
+              <dt>ยังขาดหลังส่ง {rem.length > 0 && (showRem ? '▲' : '▼')}</dt>
               <dd style={{ color: kpi && kpi.short_off_trip ? 'var(--alarm)' : undefined }}>
                 {kpi ? kpi.short_off_trip : '—'}
               </dd>
@@ -448,6 +578,163 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
             <div className="note bad" style={{ marginBottom: 14 }}>
               หัวเชื้อยังมีจำนวนต่อลังเป็น 1 — แปลว่ายังไม่ได้อัปโหลดไฟล์ Master Item ใหม่
               ระบบจึงยังไม่ปัดเป็นลังเต็ม 24 ให้ · อัปไฟล์ Master Item แล้วคำนวณใหม่อีกครั้ง
+            </div>
+          )}
+
+          {after.length > 0 && (
+            <div className="card" style={{ marginBottom: 14 }}>
+              <div className="spread">
+                <div>
+                  <h3>ยังขาดหลังส่งรอบนี้</h3>
+                  <p className="hint">
+                    บรรทัดที่ของยังเป็น 0 หลังรอบนี้จบ · เรียงตามรถไม่เข้ามานานสุด
+                  </p>
+                </div>
+                <button className="btn ghost" onClick={() => {
+                  const ws = XLSX.utils.json_to_sheet(after.map((x) => ({
+                    'จังหวัด': x.province, 'ผจก.เขต': x.area,
+                    'PlantCode': x.plant_code, 'สาขา': x.branch_name,
+                    'รหัสสินค้า': x.mat_code, 'สินค้า': x.item_name,
+                    'ขาย/วัน': x.sales_per_day, 'ของกำลังมา': x.incoming,
+                    'คลังมี': x.depot_stock,
+                    'รถไม่เข้า(วัน)': x.days_since_trip > 9000 ? '' : x.days_since_trip,
+                    'รอบนี้รถเข้า': x.on_trip ? 'ใช่' : 'ไม่',
+                    'สาเหตุ': x.reason,
+                  })))
+                  const wb = XLSX.utils.book_new()
+                  XLSX.utils.book_append_sheet(wb, ws, 'ยังขาด')
+                  XLSX.writeFile(wb, `ยังขาด_${tripDate.replace(/-/g, '')}.xlsx`)
+                }}>ดาวน์โหลด</button>
+              </div>
+
+              <div className="row" style={{ gap: 8, margin: '4px 0 14px' }}>
+                {Object.entries(
+                  after.reduce<Record<string, number>>((a2, x) => {
+                    a2[x.reason] = (a2[x.reason] ?? 0) + 1; return a2
+                  }, {})
+                ).sort((x, y) => y[1] - x[1]).map(([r, n]) => (
+                  <span key={r} className={`tag ${r === 'ของกำลังมา' ? 'oil' : 'alarm'}`}>
+                    {r} {n}
+                  </span>
+                ))}
+              </div>
+
+              <div className="tw" style={{ maxHeight: '42vh' }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>สาขา</th><th>สินค้า</th>
+                      <th className="num">ขาย/วัน</th>
+                      <th className="num">กำลังมา</th><th className="num">คลังมี</th>
+                      <th className="num">รถไม่เข้า</th><th>สาเหตุ</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {after.map((x, i) => (
+                      <tr key={i}>
+                        <td>{x.branch_name}</td>
+                        <td>{x.item_name}</td>
+                        <td className="num">{x.sales_per_day}</td>
+                        <td className="num" style={{ color: x.incoming ? 'var(--oil)' : 'var(--ink-3)' }}>
+                          {x.incoming || '—'}
+                        </td>
+                        <td className="num" style={{ color: x.depot_stock ? 'var(--ok)' : 'var(--alarm)' }}>
+                          {x.depot_stock}
+                        </td>
+                        <td className="num" style={{
+                          color: x.days_since_trip > 14 && x.days_since_trip < 9000
+                            ? 'var(--alarm)' : 'var(--ink-3)',
+                        }}>
+                          {x.days_since_trip > 9000 ? '—' : `${x.days_since_trip} วัน`}
+                        </td>
+                        <td>
+                          <span className={`tag ${x.reason === 'ของกำลังมา' ? 'oil' : 'alarm'}`}>
+                            {x.reason}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {showRem && rem.length > 0 && (
+            <div className="card" style={{ marginBottom: 14 }}>
+              <div className="spread">
+                <div>
+                  <h3>รายการที่ยังขาดหลังส่งรอบนี้</h3>
+                  <p className="hint">
+                    ของขาดในสาขาที่รถไม่ได้เข้ารอบนี้ จึงเติมไม่ได้ ·
+                    ดูว่าตัวไหนมีของกำลังมาแล้ว ตัวไหนต้องรอรถรอบหน้า
+                  </p>
+                </div>
+                <button className="btn ghost" onClick={() => {
+                  const ws = XLSX.utils.json_to_sheet(rem.map((r) => ({
+                    'จังหวัด': r.province, 'PlantCode': r.plant_code, 'สาขา': r.branch_name,
+                    'รหัสสินค้า': r.mat_code, 'สินค้า': r.item_name,
+                    'ขาย/วัน': r.sales_per_day, 'ของกำลังมา': r.incoming,
+                    'คลังมี': r.depot_stock, 'รถไม่เข้า(วัน)': r.days_since_trip,
+                    'สาเหตุ': r.reason,
+                  })))
+                  const wb = XLSX.utils.book_new()
+                  XLSX.utils.book_append_sheet(wb, ws, 'ยังขาด')
+                  XLSX.writeFile(wb, `ยังขาด_${tripDate.replace(/-/g, '')}.xlsx`)
+                }}>ดาวน์โหลด</button>
+              </div>
+
+              <div className="row" style={{ gap: 8, margin: '4px 0 14px' }}>
+                {Object.entries(rem.reduce<Record<string, number>>((a, r) => {
+                  a[r.reason] = (a[r.reason] ?? 0) + 1; return a
+                }, {})).sort((a, b) => b[1] - a[1]).map(([r, n]) => (
+                  <span key={r} className={`tag ${
+                    r === 'ของกำลังมา' ? 'oil'
+                    : r === 'คลังมีของ รอรถรอบหน้า' ? 'ok' : 'alarm'}`}>
+                    {r} {n}
+                  </span>
+                ))}
+              </div>
+
+              <div className="tw" style={{ maxHeight: '44vh' }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>สาขา</th><th>สินค้า</th>
+                      <th className="num">ขาย/วัน</th>
+                      <th className="num">กำลังมา</th><th className="num">คลังมี</th>
+                      <th className="num">รถไม่เข้า</th><th>สาเหตุ</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rem.map((r, i) => (
+                      <tr key={i}>
+                        <td>{r.branch_name}</td>
+                        <td>{r.item_name}</td>
+                        <td className="num">{r.sales_per_day}</td>
+                        <td className="num" style={{ color: r.incoming ? 'var(--oil)' : 'var(--ink-3)' }}>
+                          {r.incoming || '—'}
+                        </td>
+                        <td className="num" style={{ color: r.depot_stock ? 'var(--ok)' : 'var(--alarm)' }}>
+                          {r.depot_stock}
+                        </td>
+                        <td className="num" style={{
+                          color: r.days_since_trip > 14 ? 'var(--alarm)' : 'var(--ink-3)',
+                        }}>
+                          {r.days_since_trip > 9000 ? '—' : `${r.days_since_trip} วัน`}
+                        </td>
+                        <td>
+                          <span className={`tag ${
+                            r.reason === 'ของกำลังมา' ? 'oil'
+                            : r.reason === 'คลังมีของ รอรถรอบหน้า' ? 'ok' : 'alarm'}`}>
+                            {r.reason}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 
