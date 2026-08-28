@@ -31,6 +31,17 @@ interface Hist {
   stock_l: number; excess_l: number; booster_pct: number | null
 }
 
+interface Sales {
+  snapshot_date: string
+  avg7_l: number; avg30_l: number; avg90_l: number
+  avg7_pcs: number; avg30_pcs: number; avg90_pcs: number
+  lines: number
+}
+interface ItemSales {
+  mat_code: string; item_name: string
+  avg7: number; avg30: number; avg90: number; trend: number | null
+}
+
 type Metric = 'avail' | 'doh' | 'short' | 'excess' | 'booster'
 
 const METRIC: Record<Metric, {
@@ -55,6 +66,9 @@ export default function Dashboard({ go }: { go: (tab: string) => void }) {
   const [hist, setHist] = useState<Hist[]>([])
   const [metric, setMetric] = useState<Metric>('avail')
   const [range, setRange] = useState(30)
+  const [sales, setSales] = useState<Sales[]>([])
+  const [items, setItems] = useState<ItemSales[]>([])
+  const [unit, setUnit] = useState<'l' | 'pcs'>('l')
 
   useEffect(() => {
     supabase.rpc('dashboard_summary').then(({ data, error }) => {
@@ -68,7 +82,16 @@ export default function Dashboard({ go }: { go: (tab: string) => void }) {
     supabase.rpc('kpi_history', { p_days: range }).then(({ data }) => {
       if (Array.isArray(data)) setHist(data as Hist[])
     })
+    supabase.rpc('sales_history', { p_days: range }).then(({ data }) => {
+      if (Array.isArray(data)) setSales(data as Sales[])
+    })
   }, [range])
+
+  useEffect(() => {
+    supabase.rpc('sales_by_item', { p_limit: 8 }).then(({ data }) => {
+      if (Array.isArray(data)) setItems(data as ItemSales[])
+    })
+  }, [])
 
   if (busy) return <><h2>ภาพรวม</h2><div className="note">กำลังโหลด…</div></>
 
@@ -173,6 +196,111 @@ export default function Dashboard({ go }: { go: (tab: string) => void }) {
           </dd>
         </div>
       </dl>
+
+      {sales.length > 0 && (() => {
+        const key7  = unit === 'l' ? 'avg7_l'  : 'avg7_pcs'
+        const key30 = unit === 'l' ? 'avg30_l' : 'avg30_pcs'
+        const u = unit === 'l' ? ' ล.' : ' ชิ้น'
+        const p7: Point[]  = sales.map((x) => ({ x: x.snapshot_date, y: Number(x[key7]) }))
+        const p30: Point[] = sales.map((x) => ({ x: x.snapshot_date, y: Number(x[key30]) }))
+        const last = sales[sales.length - 1]
+        const now7 = Number(last[key7]), now30 = Number(last[key30])
+        const gap = now30 > 0 ? Math.round(100 * (now7 - now30) / now30) : 0
+
+        return (
+          <div className="card">
+            <div className="spread" style={{ marginBottom: 14 }}>
+              <div>
+                <h3>ยอดขายเฉลี่ยต่อวัน</h3>
+                <p className="hint" style={{ marginBottom: 0 }}>
+                  ไฟล์ POWER_BI ให้มาเป็นค่าเฉลี่ยของช่วง ไม่ใช่ยอดรายวันจริง ·
+                  เส้นทึบคือเฉลี่ย 7 วัน เส้นประคือ 30 วัน ·
+                  เส้นทึบต่ำกว่าเส้นประแปลว่ายอดกำลังตก
+                </p>
+              </div>
+              <div className="row" style={{ gap: 6 }}>
+                {(['l', 'pcs'] as const).map((u2) => (
+                  <button key={u2} className={`btn ${unit === u2 ? '' : 'ghost'}`}
+                    style={{ padding: '6px 14px', fontSize: 13.5 }}
+                    onClick={() => setUnit(u2)}>
+                    {u2 === 'l' ? 'ลิตร' : 'ชิ้น'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="row" style={{ gap: 30, marginBottom: 16 }}>
+              <span>
+                <span style={{ fontSize: 12, color: 'var(--ink-3)' }}>เฉลี่ย 7 วัน</span><br />
+                <strong style={{ fontFamily: 'var(--mono)', fontSize: 25 }}>
+                  {now7.toLocaleString()}
+                </strong>
+                <span style={{ fontSize: 13, color: 'var(--ink-3)' }}>{u}/วัน</span>
+              </span>
+              <span>
+                <span style={{ fontSize: 12, color: 'var(--ink-3)' }}>เฉลี่ย 30 วัน</span><br />
+                <strong style={{ fontFamily: 'var(--mono)', fontSize: 25, color: 'var(--ink-2)' }}>
+                  {now30.toLocaleString()}
+                </strong>
+                <span style={{ fontSize: 13, color: 'var(--ink-3)' }}>{u}/วัน</span>
+              </span>
+              <span>
+                <span style={{ fontSize: 12, color: 'var(--ink-3)' }}>7 วันเทียบ 30 วัน</span><br />
+                <strong style={{
+                  fontFamily: 'var(--mono)', fontSize: 25,
+                  color: gap < -10 ? 'var(--alarm)' : gap > 10 ? 'var(--ok)' : 'var(--ink-2)',
+                }}>
+                  {gap > 0 ? '+' : ''}{gap}%
+                </strong>
+              </span>
+            </div>
+
+            <LineChart data={p7} compare={p30}
+              dataLabel="เฉลี่ย 7 วัน" compareLabel="เฉลี่ย 30 วัน"
+              unit={u} decimals={0} color="#2f5bd0" height={210} />
+          </div>
+        )
+      })()}
+
+      {items.length > 0 && (
+        <div className="card">
+          <h3>ยอดขายรายสินค้า</h3>
+          <p className="hint">
+            8 อันดับแรกตามยอด 30 วัน · คอลัมน์แนวโน้มเทียบ 7 วันกับ 30 วัน
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>สินค้า</th>
+                <th className="num">7 วัน</th><th className="num">30 วัน</th>
+                <th className="num">90 วัน</th><th className="num">แนวโน้ม</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((it) => (
+                <tr key={it.mat_code}>
+                  <td>{it.item_name}</td>
+                  <td className="num">{Number(it.avg7).toLocaleString()}</td>
+                  <td className="num">{Number(it.avg30).toLocaleString()}</td>
+                  <td className="num" style={{ color: 'var(--ink-3)' }}>
+                    {Number(it.avg90).toLocaleString()}
+                  </td>
+                  <td className="num" style={{
+                    color: it.trend === null ? 'var(--ink-3)'
+                      : it.trend < -20 ? 'var(--alarm)'
+                      : it.trend > 20 ? 'var(--ok)' : 'var(--ink-3)',
+                  }}>
+                    {it.trend === null ? '—' : `${it.trend > 0 ? '+' : ''}${it.trend}%`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="hint" style={{ margin: '14px 0 0' }}>
+            หน่วยเป็นลิตรต่อวัน · แนวโน้มติดลบเกิน 20% ควรชะลอการเติมก่อนของกอง
+          </p>
+        </div>
+      )}
 
       {hist.length > 1 && (() => {
         const m = METRIC[metric]
