@@ -5,11 +5,12 @@ import { StepNum, Fold } from './ui'
 
 interface Plan {
   mat_code: string; item_name: string; uom: string | null
-  units_per_case: number; days: number
+  pack_size: number; units_per_case: number; days: number
   issued: number; issue_days: number
   per_day: number; prev_per_day: number; trend_pct: number | null
   depot_stock: number; depot_doh: number | null
-  target_stock: number; suggest_qty: number; suggest_case: number
+  target_stock: number; suggest_qty: number
+  suggest_cases: number; order_pcs: number
   status: string
 }
 interface Idle { mat_code: string; item_name: string; uom: string | null; depot_stock: number }
@@ -71,7 +72,8 @@ export default function Depot() {
 
   const totals = useMemo(() => ({
     issued: rows.reduce((s, r) => s + r.issued, 0),
-    order: rows.reduce((s, r) => s + r.suggest_case, 0),
+    order: rows.reduce((s, r) => s + r.order_pcs, 0),
+    cases: rows.reduce((s, r) => s + r.suggest_cases, 0),
     urgent: rows.filter((r) => r.status === 'คลังหมด' || r.status === 'ต้องสั่งด่วน').length,
     skus: rows.length,
   }), [rows])
@@ -97,7 +99,6 @@ export default function Depot() {
       'รหัสสินค้า': r.mat_code,
       'สินค้า': r.item_name,
       'หน่วย': r.uom,
-      'ต่อลัง': r.units_per_case,
       [`เปิดไป ${days} วัน`]: r.issued,
       'เฉลี่ย/วัน': r.per_day,
       'ช่วงก่อน/วัน': r.prev_per_day,
@@ -105,8 +106,10 @@ export default function Depot() {
       'คลังมี': r.depot_stock,
       'คลัง DOH': r.depot_doh,
       'ควรมี': r.target_stock,
-      'ควรสั่ง': r.suggest_qty,
-      'ควรสั่ง (ปัดลัง)': r.suggest_case,
+      'ขาดอยู่ (ชิ้น)': r.suggest_qty,
+      'ต่อลัง': r.pack_size,
+      'ควรสั่ง (ลัง)': r.suggest_cases,
+      'ได้จริง (ชิ้น)': r.order_pcs,
       'สถานะ': r.status,
     })))
     const wb = XLSX.utils.book_new()
@@ -144,7 +147,8 @@ export default function Depot() {
           </span>
         </div>
         <p className="hint" style={{ margin: '12px 0 0' }}>
-          ควรมี = เฉลี่ยต่อวัน × ({cover} + {lead}) = พอจ่าย {cover + lead} วัน
+          ควรมี = เฉลี่ยต่อวัน × ({cover} + {lead}) = พอจ่าย {cover + lead} วัน ·
+          จำนวนลังปัดขึ้นจากยอดที่ขาด ใช้ PACK SIZE จาก Master Item เป็นตัวหาร
         </p>
       </div>
 
@@ -161,6 +165,10 @@ export default function Depot() {
           </div>
           <div className="stat">
             <dt>รวมที่ควรสั่ง</dt>
+            <dd>{totals.cases.toLocaleString()} <small>ลัง</small></dd>
+          </div>
+          <div className="stat">
+            <dt>คิดเป็นชิ้น</dt>
             <dd>{totals.order.toLocaleString()} <small>ชิ้น</small></dd>
           </div>
         </dl>
@@ -200,7 +208,10 @@ export default function Depot() {
                   <th className="num">คลังมี</th>
                   <th className="num">คลัง DOH</th>
                   <th className="num">ควรมี</th>
-                  <th className="num">ควรสั่ง</th>
+                  <th className="num">ขาด</th>
+                  <th className="num">ต่อลัง</th>
+                  <th className="num">สั่ง (ลัง)</th>
+                  <th className="num">ได้ (ชิ้น)</th>
                   <th>สถานะ</th>
                 </tr>
               </thead>
@@ -209,9 +220,6 @@ export default function Depot() {
                   <tr key={r.mat_code}>
                     <td>
                       {r.item_name}
-                      {r.units_per_case > 1 && (
-                        <span className="tag" style={{ marginLeft: 6 }}>ลัง {r.units_per_case}</span>
-                      )}
                     </td>
                     <td className="num">{r.issued}</td>
                     <td className="num">{Number(r.per_day).toFixed(1)}</td>
@@ -230,12 +238,12 @@ export default function Depot() {
                       {r.depot_doh ?? '—'}
                     </td>
                     <td className="num" style={{ color: 'var(--ink-3)' }}>{r.target_stock}</td>
+                    <td className="num" style={{ color: 'var(--ink-3)' }}>{r.suggest_qty || '—'}</td>
+                    <td className="num" style={{ color: 'var(--ink-3)' }}>{r.pack_size}</td>
                     <td className="num">
-                      <strong>{r.suggest_case}</strong>
-                      {r.suggest_case !== r.suggest_qty && (
-                        <span style={{ color: 'var(--ink-3)', fontSize: 11 }}> ({r.suggest_qty})</span>
-                      )}
+                      <strong style={{ fontSize: 15 }}>{r.suggest_cases || '—'}</strong>
                     </td>
+                    <td className="num" style={{ color: 'var(--ink-2)' }}>{r.order_pcs || '—'}</td>
                     <td><span className={`tag ${STATUS[r.status] ?? ''}`}>{r.status}</span></td>
                   </tr>
                 ))}
