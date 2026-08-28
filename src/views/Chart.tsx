@@ -3,10 +3,15 @@
 export interface Point { x: string; y: number | null }
 
 export function LineChart({
-  data, target, unit = '', height = 190, color = '#4a7c74',
+  data, compare, compareLabel, dataLabel,
+  target, unit = '', height = 190, color = '#4a7c74',
   targetLabel, goodAbove = true, decimals = 1,
 }: {
   data: Point[]
+  /** เส้นเทียบเส้นที่สอง วาดเป็นเส้นประ */
+  compare?: Point[]
+  compareLabel?: string
+  dataLabel?: string
   target?: number
   unit?: string
   height?: number
@@ -24,8 +29,11 @@ export function LineChart({
     )
   }
 
-  const W = 760, H = height, PL = 46, PR = 14, PT = 16, PB = 28
-  const ys = pts.map((p) => p.y).concat(target !== undefined ? [target] : [])
+  const W = 760, H = height, PL = 46, PR = 14, PT = 26, PB = 28
+  const cmp = (compare ?? []).filter((p) => p.y !== null) as { x: string; y: number }[]
+  const ys = pts.map((p) => p.y)
+    .concat(cmp.map((p) => p.y))
+    .concat(target !== undefined ? [target] : [])
   let lo = Math.min(...ys), hi = Math.max(...ys)
   const pad = (hi - lo) * 0.18 || Math.max(Math.abs(hi) * 0.1, 1)
   lo -= pad; hi += pad
@@ -77,6 +85,16 @@ export function LineChart({
       )}
 
       <path d={area} fill={`url(#${gid})`} />
+
+      {cmp.length > 1 && (
+        <path
+          d={cmp.map((p, i) => {
+            const j = pts.findIndex((q) => q.x === p.x)
+            return `${i ? 'L' : 'M'}${px(j < 0 ? i : j).toFixed(1)},${py(p.y).toFixed(1)}`
+          }).join(' ')}
+          fill="none" stroke="#98938a" strokeWidth="1.8"
+          strokeDasharray="6 4" strokeLinejoin="round" />
+      )}
       <path d={line} fill="none" stroke={stroke} strokeWidth="2.5"
         strokeLinejoin="round" strokeLinecap="round" />
 
@@ -88,6 +106,24 @@ export function LineChart({
           <title>{`${p.x} · ${p.y.toFixed(decimals)}${unit}`}</title>
         </circle>
       ))}
+
+      {(dataLabel || compareLabel) && (
+        <g>
+          {dataLabel && (
+            <>
+              <line x1={PL} y1={PT - 4} x2={PL + 16} y2={PT - 4} stroke={stroke} strokeWidth="2.5" />
+              <text x={PL + 22} y={PT} fontSize="11.5" fill="#5f5c55">{dataLabel}</text>
+            </>
+          )}
+          {compareLabel && cmp.length > 1 && (
+            <>
+              <line x1={PL + 108} y1={PT - 4} x2={PL + 124} y2={PT - 4}
+                stroke="#98938a" strokeWidth="1.8" strokeDasharray="5 3" />
+              <text x={PL + 130} y={PT} fontSize="11.5" fill="#5f5c55">{compareLabel}</text>
+            </>
+          )}
+        </g>
+      )}
 
       {pts.map((p, i) => (i % labelEvery === 0 || i === pts.length - 1) ? (
         <text key={i} x={px(i)} y={H - 8} textAnchor="middle"
