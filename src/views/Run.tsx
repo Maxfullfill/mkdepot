@@ -34,6 +34,19 @@ interface ShortAfter {
   on_trip: boolean; reason: string
 }
 
+interface Explain {
+  found: boolean; reason?: string
+  branch_name?: string; item_name?: string; class_fix?: string
+  stock_pcs?: number; in_transit?: number; depot_stock?: number | null
+  sales_30_l?: number; litre_per_piece?: number; sales_per_day?: number
+  doh_now?: number | null; cover_day?: number; lead_time?: number
+  safety_stock?: number; demand_cover?: number; target?: number
+  skipped?: boolean; need?: number; need_rounded?: number
+  units_per_case?: number; notes?: string[]
+  actual?: { suggested: number; final: number; priority: number
+             flag: string | null; cover_day: number; target: number; run_at: string } | null
+}
+
 interface Rem {
   plant_code: string; branch_name: string; province: string
   mat_code: string; item_name: string; sales_per_day: number
@@ -105,6 +118,9 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
   const [rem, setRem] = useState<Rem[]>([])
   const [info, setInfo] = useState<RunInfo | null>(null)
   const [showRem, setShowRem] = useState(false)
+  const [exPlant, setExPlant] = useState('')
+  const [exMat, setExMat] = useState('')
+  const [ex, setEx] = useState<Explain | null>(null)
   const [meta, setMeta] = useState<Meta | null>(null)
   const [after, setAfter] = useState<ShortAfter[]>([])
   const [off, setOff] = useState<OffAlert[]>([])
@@ -356,6 +372,16 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
     } finally { setBusy(false) }
+  }
+
+  /** ตรวจว่าบรรทัดหนึ่งคำนวณออกมาแบบนี้เพราะอะไร */
+  async function explain() {
+    if (!exPlant.trim() || !exMat.trim()) return
+    const { data, error } = await supabase.rpc('explain_line', {
+      p_plant: exPlant.trim(), p_mat: exMat.trim(), p_trip: tripDate,
+    })
+    if (error) { setErr(error.message); return }
+    setEx(data as Explain)
   }
 
   /** สินค้าที่ใช้เทมเพลตคนละแบบ ออกเป็นไฟล์ต่างหาก */
@@ -918,6 +944,93 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
               </tbody>
             </table>
           </div>
+          <div className="card" style={{ marginTop: 20 }}>
+            <h3>ตรวจบรรทัด</h3>
+            <p className="hint">
+              ใส่รหัสสาขากับรหัสสินค้า เพื่อดูว่าสูตรคิดยังไงถึงได้ยอดเท่านี้
+            </p>
+            <div className="row">
+              <input type="text" placeholder="รหัสสาขา เช่น SC10" value={exPlant}
+                onChange={(e) => setExPlant(e.target.value)} style={{ width: 170 }} />
+              <input type="text" placeholder="รหัสสินค้า เช่น 100000133" value={exMat}
+                onChange={(e) => setExMat(e.target.value)} style={{ width: 200 }} />
+              <button className="btn" onClick={() => void explain()}>ตรวจ</button>
+              {ex && <button className="btn ghost" onClick={() => setEx(null)}>ปิด</button>}
+            </div>
+
+            {ex && !ex.found && (
+              <div className="note bad" style={{ marginTop: 14 }}>{ex.reason}</div>
+            )}
+
+            {ex?.found && (
+              <div style={{ marginTop: 18 }}>
+                <p style={{ margin: '0 0 12px', fontWeight: 600 }}>
+                  {ex.branch_name} · {ex.item_name}
+                  <span className="tag" style={{ marginLeft: 8 }}>{ex.class_fix}</span>
+                </p>
+
+                <table>
+                  <tbody>
+                    <tr><td style={{ width: 240 }}>คงเหลือที่สาขา</td>
+                      <td className="num" style={{ width: 110 }}>{ex.stock_pcs}</td>
+                      <td style={{ color: 'var(--ink-3)' }}>ชิ้น</td></tr>
+                    <tr><td>ของระหว่างทาง</td>
+                      <td className="num" style={{ color: ex.in_transit ? 'var(--oil)' : undefined }}>
+                        {ex.in_transit}</td>
+                      <td style={{ color: 'var(--ink-3)' }}>ชิ้น — หักออกจากยอดสั่ง</td></tr>
+                    <tr><td>ยอดขายต่อวัน</td>
+                      <td className="num">{ex.sales_per_day}</td>
+                      <td style={{ color: 'var(--ink-3)' }}>
+                        = {ex.sales_30_l} ลิตร ÷ {ex.litre_per_piece} ลิตรต่อชิ้น</td></tr>
+                    <tr><td>DOH ตอนนี้</td>
+                      <td className="num">{ex.doh_now ?? '—'}</td>
+                      <td style={{ color: 'var(--ink-3)' }}>วัน</td></tr>
+                    <tr><td>CoverDay ของสาขานี้</td>
+                      <td className="num"><strong>{ex.cover_day}</strong></td>
+                      <td style={{ color: 'var(--ink-3)' }}>+ LeadTime {ex.lead_time} วัน</td></tr>
+                    <tr><td>ต้องมีถึงรอบหน้า</td>
+                      <td className="num">{ex.demand_cover}</td>
+                      <td style={{ color: 'var(--ink-3)' }}>
+                        = {ex.sales_per_day} × ({ex.cover_day} + {ex.lead_time})</td></tr>
+                    <tr><td>Safety stock</td>
+                      <td className="num">{ex.safety_stock}</td><td /></tr>
+                    <tr><td>เป้าหมายรวม</td>
+                      <td className="num"><strong>{ex.target}</strong></td>
+                      <td style={{ color: 'var(--ink-3)' }}>ชิ้น</td></tr>
+                    <tr style={{ background: 'var(--wash)' }}>
+                      <td><strong>ควรสั่ง</strong></td>
+                      <td className="num">
+                        <strong style={{ fontSize: 16 }}>{ex.need_rounded}</strong>
+                      </td>
+                      <td style={{ color: 'var(--ink-3)' }}>
+                        {ex.skipped ? 'ถูกข้าม' : `= CEIL(${ex.target} − ${ex.stock_pcs} − ${ex.in_transit})`}
+                        {ex.need_rounded !== ex.need && ` · ปัดยกลัง ${ex.units_per_case}`}
+                      </td></tr>
+                    <tr><td>คลังมีของ</td>
+                      <td className="num" style={{
+                        color: ex.depot_stock === 0 ? 'var(--alarm)' : undefined,
+                      }}>
+                        {ex.depot_stock === null ? 'ไม่มีข้อมูล' : ex.depot_stock}
+                      </td><td /></tr>
+                  </tbody>
+                </table>
+
+                <div className={`note ${ex.skipped || (ex.need_rounded ?? 0) === 0 ? 'bad' : 'good'}`}
+                  style={{ marginTop: 14 }}>
+                  {(ex.notes ?? []).map((n, i) => <div key={i}>{n}</div>)}
+                </div>
+
+                {ex.actual && (
+                  <div className="note" style={{ marginTop: 12 }}>
+                    ผลจริงในรอบที่คำนวณไว้ — ระบบเสนอ {ex.actual.suggested} ชิ้น ·
+                    ยอดสุดท้าย {ex.actual.final} ชิ้น · ลำดับความสำคัญ {ex.actual.priority}
+                    {ex.actual.flag && ` · ${ex.actual.flag}`}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           <p className="hint" style={{ marginTop: 8 }}>
             แถบวัดยาวตามจำนวนวันที่ของจะอยู่ได้ ขีดดำคือเส้น KPI — แดงคือต่ำกว่า 7 วัน เหลืองคือเกินเส้น
             {lines.length > mainLines.length &&
