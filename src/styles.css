@@ -275,6 +275,36 @@ button.note:hover { border-left-width: 6px; padding-left: 19px; }
 .step-num.sm input { width: 50px; padding: 4px 2px; font-size: 13.5px; }
 .step-num.sm button { width: 25px; font-size: 14px; }
 
+/* ── ช่องค้นหาแบบเลือกได้ ────────────────────────────────────────── */
+
+.picker { position: relative; display: inline-block; }
+.picker > input { width: 100%; }
+.picker-code {
+  position: absolute; right: 11px; top: 50%; transform: translateY(-50%);
+  font-family: var(--mono); font-size: 11px; color: var(--ink-3);
+  pointer-events: none; background: #fff; padding-left: 6px;
+}
+.picker-list {
+  position: absolute; z-index: 60; top: calc(100% + 5px); left: 0; right: 0;
+  max-height: 290px; overflow-y: auto;
+  background: #fff; border: 1px solid var(--rule-2); border-radius: var(--r2);
+  box-shadow: 0 10px 28px rgba(22, 22, 26, .13);
+  padding: 5px;
+}
+.picker-list button {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  width: 100%; text-align: left; border: 0; background: none; cursor: pointer;
+  padding: 8px 10px; border-radius: 5px; font-family: var(--sans); font-size: 14px;
+  color: var(--ink);
+}
+.picker-list button.on { background: var(--ink); color: #fff; }
+.picker-list button.on .pv { color: rgba(255,255,255,.62); }
+.picker-list .pl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-list .pv {
+  font-family: var(--mono); font-size: 11px; color: var(--ink-3); flex: none;
+}
+.picker-empty { padding: 12px 10px; font-size: 13.5px; color: var(--ink-3); }
+
 /* ── สวิตช์ ──────────────────────────────────────────────────────── */
 
 .sw { position: relative; display: inline-block; width: 40px; height: 22px; flex: none; }
