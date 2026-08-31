@@ -22,6 +22,7 @@ interface Item {
 /** ค่าที่มีหน้าตาเฉพาะ ไม่ต้องแสดงซ้ำในตารางรวม */
 const OWN_UI = [
   'cover_mode', 'cover_fixed', 'cover_percentile', 'cycle_min_trips',
+  'month_early_cover', 'month_late_cover', 'month_split_day',
   'lead_time', 'ss_class_a', 'ss_class_b', 'ss_class_c',
   'include_class_a', 'include_class_b', 'include_class_c',
   'doh_ceiling', 'doh_budget_enabled', 'doh_budget_days',
@@ -155,6 +156,10 @@ export default function Settings() {
           <label style={{ display: 'flex', gap: 7, alignItems: 'center', cursor: 'pointer' }}>
             <input type="radio" name="cm" checked={mode === 1} onChange={() => save('cover_mode', 1)} />
             คิดจากรอบส่งจริงรายสาขา
+          </label>
+          <label style={{ display: 'flex', gap: 7, alignItems: 'center', cursor: 'pointer' }}>
+            <input type="radio" name="cm" checked={mode === 2} onChange={() => save('cover_mode', 2)} />
+            แบ่งช่วงต้นเดือน / ปลายเดือน
           </label>
         </div>
 
