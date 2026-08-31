@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
+import { Picker, type Option } from './ui'
 
 interface Line {
   id: number; plant_code: string; mat_code: string
@@ -55,6 +56,7 @@ interface Rem {
 interface RunInfo {
   found: boolean; run_id?: string; created_at?: string; snapshot_date?: string
   exported?: boolean; lines?: number; stale?: boolean; reasons?: string[]
+  early_mode?: boolean | null; suggest_early?: boolean
 }
 
 interface Incoming { source: string; lines: number; qty: number; stations: number }
@@ -117,10 +119,14 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
   const [incoming, setIncoming] = useState<Incoming[]>([])
   const [rem, setRem] = useState<Rem[]>([])
   const [info, setInfo] = useState<RunInfo | null>(null)
+  const [early, setEarly] = useState(true)
+  const [cov, setCov] = useState({ early: 20, late: 7, lead: 3, split: 21 })
   const [showRem, setShowRem] = useState(false)
   const [exPlant, setExPlant] = useState('')
   const [exMat, setExMat] = useState('')
   const [ex, setEx] = useState<Explain | null>(null)
+  const [stOpts, setStOpts] = useState<Option[]>([])
+  const [itOpts, setItOpts] = useState<Option[]>([])
   const [meta, setMeta] = useState<Meta | null>(null)
   const [after, setAfter] = useState<ShortAfter[]>([])
   const [off, setOff] = useState<OffAlert[]>([])
@@ -143,6 +149,35 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
     return () => { dead = true }
   }, [tripDate])
 
+  /** ค่า CoverDay ของแต่ละช่วง ใช้แสดงข้างช่องติ๊ก */
+  useEffect(() => {
+    supabase.from('settings').select('key, value')
+      .in('key', ['month_early_cover', 'month_late_cover', 'lead_time', 'month_split_day'])
+      .then(({ data }) => {
+        const m = Object.fromEntries((data ?? []).map((x) => [x.key, Number(x.value)]))
+        setCov({
+          early: m.month_early_cover ?? 20, late: m.month_late_cover ?? 7,
+          lead: m.lead_time ?? 3, split: m.month_split_day ?? 21,
+        })
+      })
+  }, [])
+
+  /** รายชื่อสาขาและสินค้าสำหรับช่องค้นหา โหลดครั้งเดียว */
+  useEffect(() => {
+    supabase.from('stations').select('plant_code, branch_name')
+      .eq('is_active', true).order('branch_name')
+      .then(({ data }) => setStOpts((data ?? []).map((r) => ({
+        value: r.plant_code as string,
+        label: (r.branch_name as string) || (r.plant_code as string),
+      }))))
+    supabase.from('items').select('mat_code, template_descr, desc_th, desc_en')
+      .eq('is_active', true).order('mat_code')
+      .then(({ data }) => setItOpts((data ?? []).map((r) => ({
+        value: r.mat_code as string,
+        label: (r.template_descr ?? r.desc_th ?? r.desc_en ?? r.mat_code) as string,
+      }))))
+  }, [])
+
   useEffect(() => {
     supabase.rpc('incoming_summary').then(({ data }) => {
       if (Array.isArray(data)) setIncoming(data as Incoming[])
@@ -157,6 +192,8 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
       if (dead) return
       const r = (data as RunInfo) ?? { found: false }
       setInfo(r)
+      // ใช้โหมดของรอบเดิมถ้ามี ไม่งั้นให้ระบบเดาจากวันที่
+      setEarly(r.early_mode ?? r.suggest_early ?? true)
       if (!r.found || !r.run_id) return
       setRunId(r.run_id)
       const n = await load(r.run_id)
@@ -185,6 +222,7 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
         p_trip_date: tripDate,
         p_snapshot_date: snapshotDate,
         p_created_by: (await supabase.auth.getUser()).data.user?.id ?? null,
+        p_early: early,
       })
       if (error) throw new Error(error.message)
       setRunId(data as string)
@@ -444,6 +482,15 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
           </div>
         )}
 
+        {info?.suggest_early !== undefined && early !== info.suggest_early && (
+          <div className="note" style={{ marginTop: 12 }}>
+            วันที่ {tripDate.slice(-2)} ระบบเดาว่าควรเป็น
+            {info.suggest_early ? ' ต้นเดือน' : ' ปลายเดือน'}
+            {' '}(ตัดที่วันที่ {cov.split}) แต่คุณเลือก
+            {early ? ' ต้นเดือน' : ' ปลายเดือน'} — จะใช้ตามที่เลือก
+          </div>
+        )}
+
         {info?.found && (
           <div className={`note ${info.stale ? 'bad' : 'good'}`} style={{ marginTop: 12 }}>
             {info.stale ? (
@@ -458,6 +505,8 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
                   day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
                 })}
                 {' · '}{info.lines} บรรทัด
+                {info.early_mode !== null && info.early_mode !== undefined &&
+                  ` · โหมด${info.early_mode ? 'ต้นเดือน' : 'ปลายเดือน'}`}
                 {info.exported ? ' · ออกไฟล์แล้ว' : ' · ยังไม่ได้ออกไฟล์'}
                 {' · ข้อมูลยังไม่เปลี่ยน ไม่ต้องคำนวณใหม่'}
               </>
@@ -921,7 +970,15 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
                 {shown.map((l) => {
                   const p = PRIORITY[l.priority as 1 | 2 | 3 | 4] ?? PRIORITY[4]
                   return (
-                    <tr key={l.id}>
+                    <tr key={l.id} style={{ cursor: 'pointer' }}
+                      title="กดเพื่อดูว่าบรรทัดนี้คำนวณยังไง"
+                      onClick={(e) => {
+                        if ((e.target as HTMLElement).tagName === 'INPUT') return
+                        setExPlant(l.plant_code); setExMat(l.mat_code)
+                        void supabase.rpc('explain_line', {
+                          p_plant: l.plant_code, p_mat: l.mat_code, p_trip: tripDate,
+                        }).then(({ data }) => setEx(data as Explain))
+                      }}>
                       <td>{l.branch_name ?? l.plant_code}</td>
                       <td>{l.item_desc ?? l.mat_code}</td>
                       <td><span className={`tag ${p.cls}`}>{l.flag ?? p.label}</span></td>
@@ -950,11 +1007,12 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
               ใส่รหัสสาขากับรหัสสินค้า เพื่อดูว่าสูตรคิดยังไงถึงได้ยอดเท่านี้
             </p>
             <div className="row">
-              <input type="text" placeholder="รหัสสาขา เช่น SC10" value={exPlant}
-                onChange={(e) => setExPlant(e.target.value)} style={{ width: 170 }} />
-              <input type="text" placeholder="รหัสสินค้า เช่น 100000133" value={exMat}
-                onChange={(e) => setExMat(e.target.value)} style={{ width: 200 }} />
-              <button className="btn" onClick={() => void explain()}>ตรวจ</button>
+              <Picker options={stOpts} value={exPlant} onChange={setExPlant}
+                placeholder="พิมพ์ชื่อสาขาหรือรหัส" width={260} />
+              <Picker options={itOpts} value={exMat} onChange={setExMat}
+                placeholder="พิมพ์ชื่อสินค้าหรือรหัส" width={320} />
+              <button className="btn" onClick={() => void explain()}
+                disabled={!exPlant || !exMat}>ตรวจ</button>
               {ex && <button className="btn ghost" onClick={() => setEx(null)}>ปิด</button>}
             </div>
 
