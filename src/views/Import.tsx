@@ -27,7 +27,7 @@ const SOURCES: Source[] = [
   { kind: 'power_bi', title: 'สต็อกรายสาขา (POWER_BI)',
     hint: 'คงเหลือและยอดขายเฉลี่ย 7/30/90 วัน — หัวใจของทุกการคำนวณ' },
   { kind: 'trips', title: 'เที่ยวรถ',
-    hint: 'สาขาที่รถเข้ารอบนี้ ระบบคำนวณเฉพาะสาขาในรายการ' },
+    hint: 'สาขาที่รถเข้ารอบนี้ ระบบคำนวณเฉพาะสาขาในรายการ · อ่านทุกชีต เที่ยว 1 · เที่ยว 2 · ต่างคลัง รวมกันในครั้งเดียว และตัดแถวที่คลังที่รับเป็นรถโอนออก' },
   { kind: 'me2n', title: 'ของระหว่างทาง (ME2N)', sheet: 'ME2N', optional: true,
     hint: 'PO ที่สั่งแล้วของยังไม่ถึง — ไม่อัปจะสั่งซ้ำของที่กำลังมา' },
   { kind: 'wms', title: 'สต็อกคลัง (WMS)', optional: true,
@@ -77,7 +77,7 @@ export default function Import({ snapshotDate, setSnapshotDate }: {
     setBusy(kind); setProgress('กำลังอ่านไฟล์…')
     try {
       const { grid, sheets } = await readSheet(file, sheetHint)
-      await route(kind, file.name, grid, sheets)
+      await route(kind, file.name, grid, sheets, file)
     } catch (e) {
       say(kind, false, e instanceof Error ? e.message : String(e))
     } finally {
@@ -86,7 +86,11 @@ export default function Import({ snapshotDate, setSnapshotDate }: {
     }
   }
 
-  async function route(kind: Kind, filename: string, grid: Grid, sheets: string[]) {
+  /** ชีตเที่ยวรถที่ต้องอ่าน — เที่ยว 1, เที่ยว 2 และต่างคลัง */
+  const isTripSheet = (n: string) =>
+    /เที่ยว|ต่างคลัง|ข้ามคลัง/.test(n) || /^\s*[123]\s*$/.test(n)
+
+  async function route(kind: Kind, filename: string, grid: Grid, sheets: string[], file: File) {
     const tick = (d: number, t: number) => setProgress(`ส่งขึ้นฐานข้อมูล ${d}/${t} แถว`)
 
     if (kind === 'master_items') {
@@ -194,8 +198,34 @@ export default function Import({ snapshotDate, setSnapshotDate }: {
       return
     }
 
-    // เที่ยวรถ: เก็บทั้งประวัติ (ใช้คำนวณรอบส่ง) และแผนรอบนี้ (ใช้เลือกสาขา)
-    const { rows, skipped, warnings } = parseTrips(grid)
+    // เที่ยวรถ: อ่านทุกชีตที่เกี่ยวข้องรวมกัน ไม่ใช่ชีตเดียว
+    // เก็บทั้งประวัติ (ใช้คำนวณรอบส่ง) และแผนรอบนี้ (ใช้เลือกสาขา)
+    const tripSheets = sheets.filter(isTripSheet)
+    const pickSheets = tripSheets.length ? tripSheets : [sheets[0]]
+
+    const rows: Awaited<ReturnType<typeof parseTrips>>['rows'] = []
+    const perSheet: string[] = []
+    let skipped = 0
+    const warnings: string[] = []
+    let dropTransfer = 0
+
+    for (const sn of pickSheets) {
+      setProgress(`กำลังอ่านชีต ${sn}…`)
+      const g = sn === pickSheets[0] && !tripSheets.length
+        ? grid : (await readSheet(file, sn)).grid
+      const r = parseTrips(g)
+      // ตัดแถวที่คลังที่รับเป็นรถโอน ไม่ใช่การส่งจากคลังเรา
+      const keep = r.rows.filter((x) => {
+        const txt = `${x.pickup_point ?? ''} ${x.source_name ?? ''}`
+        if (/รถโอน/.test(txt)) { dropTransfer++; return false }
+        return true
+      })
+      rows.push(...keep)
+      skipped += r.skipped
+      warnings.push(...r.warnings)
+      perSheet.push(`${sn} ${keep.length} แถว`)
+    }
+
     if (!rows.length) throw new Error('ไม่พบสาขาในไฟล์เที่ยวรถ — ชีตที่มีให้เลือก: ' + sheets.join(', '))
     const bid = await batch(kind, filename, rows.length)
     // จับคู่สามชั้น: รหัสหน้า (Site Code2) → รหัสท้าย → ตารางเทียบที่กรอกเอง
@@ -251,6 +281,8 @@ export default function Import({ snapshotDate, setSnapshotDate }: {
 
     say(kind, !unknown.length, [
       `บันทึกเที่ยวรถ ${dedup.length} สาขา สำหรับวันที่ ${snapshotDate}`,
+      `อ่าน ${pickSheets.length} ชีต — ${perSheet.join(' · ')}`,
+      dropTransfer ? `ตัด ${dropTransfer} แถวที่คลังที่รับเป็นรถโอน` : '',
       translated ? `แปลงรหัสด้วยทะเบียนสถานี ${translated} แถว` : '',
       skipped ? `ข้าม ${skipped} แถวที่ไม่ใช่สถานีในความดูแล` : '',
       unknown.length ? `จับคู่ไม่ได้ ${unknown.length} รหัส (${unknown.slice(0, 5).join(', ')}) — ไปผูกรหัสที่หน้า KPI และค่าคำนวณ` : '',
