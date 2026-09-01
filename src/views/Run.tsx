@@ -39,6 +39,11 @@ interface Explain {
   found: boolean; reason?: string
   branch_name?: string; item_name?: string; class_fix?: string
   stock_pcs?: number; in_transit?: number; depot_stock?: number | null
+  oldest_po_days?: number | null
+  incoming_detail?: {
+    source: string; po_no: string | null; po_date: string | null
+    age_days: number | null; qty: number; note: string | null
+  }[]
   sales_30_l?: number; litre_per_piece?: number; sales_per_day?: number
   doh_now?: number | null; cover_day?: number; lead_time?: number
   safety_stock?: number; demand_cover?: number; target?: number
@@ -1035,7 +1040,14 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
                     <tr><td>ของระหว่างทาง</td>
                       <td className="num" style={{ color: ex.in_transit ? 'var(--oil)' : undefined }}>
                         {ex.in_transit}</td>
-                      <td style={{ color: 'var(--ink-3)' }}>ชิ้น — หักออกจากยอดสั่ง</td></tr>
+                      <td style={{ color: 'var(--ink-3)' }}>
+                        ชิ้น — หักออกจากยอดสั่ง
+                        {(ex.oldest_po_days ?? 0) > 30 && (
+                          <span style={{ color: 'var(--alarm)', marginLeft: 8 }}>
+                            ใบเก่าสุดค้างมา {ex.oldest_po_days} วัน
+                          </span>
+                        )}
+                      </td></tr>
                     <tr><td>ยอดขายต่อวัน</td>
                       <td className="num">{ex.sales_per_day}</td>
                       <td style={{ color: 'var(--ink-3)' }}>
@@ -1072,6 +1084,49 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
                       </td><td /></tr>
                   </tbody>
                 </table>
+
+                {(ex.incoming_detail ?? []).length > 0 && (
+                  <div style={{ marginTop: 16 }}>
+                    <p className="hint" style={{ margin: '0 0 8px' }}>
+                      ของระหว่างทาง {ex.in_transit} ชิ้น มาจากใบไหนบ้าง
+                    </p>
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>แหล่ง</th><th>เลขที่</th><th>วันที่</th>
+                          <th className="num">อายุ</th><th className="num">จำนวน</th><th></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ex.incoming_detail!.map((d, i) => (
+                          <tr key={i}>
+                            <td>
+                              <span className={`tag ${d.source === 'ME2N' ? ''
+                                : d.source === 'โอนจากสาขา' ? 'ok' : 'oil'}`}>
+                                {d.source}
+                              </span>
+                            </td>
+                            <td style={{ fontFamily: 'var(--mono)', fontSize: 13 }}>
+                              {d.po_no ?? '—'}
+                            </td>
+                            <td style={{ fontFamily: 'var(--mono)', fontSize: 12.5,
+                                         color: 'var(--ink-3)' }}>
+                              {d.po_date ?? '—'}
+                            </td>
+                            <td className="num" style={{
+                              color: (d.age_days ?? 0) > 60 ? 'var(--alarm)'
+                                : (d.age_days ?? 0) > 30 ? 'var(--oil)' : 'var(--ink-3)',
+                            }}>
+                              {d.age_days !== null ? `${d.age_days} วัน` : '—'}
+                            </td>
+                            <td className="num"><strong>{Number(d.qty)}</strong></td>
+                            <td style={{ fontSize: 12.5, color: 'var(--oil)' }}>{d.note}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
 
                 <div className={`note ${ex.skipped || (ex.need_rounded ?? 0) === 0 ? 'bad' : 'good'}`}
                   style={{ marginTop: 14 }}>
