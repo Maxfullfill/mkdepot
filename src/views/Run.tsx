@@ -62,7 +62,20 @@ interface RunInfo {
   found: boolean; run_id?: string; created_at?: string; snapshot_date?: string
   exported?: boolean; lines?: number; stale?: boolean; reasons?: string[]
   early_mode?: boolean | null; suggest_early?: boolean
+  cover_opt?: string | null; used_depot?: boolean | null
+  suggest_cover?: string; has_depot?: boolean
 }
+
+/** เกณฑ์ CoverDay ที่เลือกได้ในแต่ละรอบ */
+const COVER_OPTS = [
+  { v: 'early', label: 'ต้นเดือน',              hint: 'ใช้ตัวเลขต้นเดือนจากหน้าตั้งค่า' },
+  { v: 'late',  label: 'ปลายเดือน',             hint: 'ใช้ตัวเลขปลายเดือนจากหน้าตั้งค่า' },
+  { v: 'fixed', label: 'ค่าคงที่',               hint: 'ใช้ค่าเดียวกันทุกสาขา' },
+  { v: 'p50',   label: 'P50 — รอบกลาง',          hint: 'ครึ่งหนึ่งของรอบรถสั้นกว่านี้ ประหยัดของแต่เสี่ยงขาด' },
+  { v: 'p75',   label: 'P75 — เผื่อพอประมาณ',    hint: 'สามในสี่ของรอบรถสั้นกว่านี้' },
+  { v: 'p90',   label: 'P90 — เผื่อรอบยาว',      hint: 'เก้าในสิบของรอบรถสั้นกว่านี้' },
+  { v: 'p95',   label: 'P95 — เผื่อเกือบทุกกรณี', hint: 'แทบไม่ขาดแต่ของกองเยอะ' },
+]
 
 interface Incoming { source: string; lines: number; qty: number; stations: number }
 
@@ -124,8 +137,10 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
   const [incoming, setIncoming] = useState<Incoming[]>([])
   const [rem, setRem] = useState<Rem[]>([])
   const [info, setInfo] = useState<RunInfo | null>(null)
-  const [early, setEarly] = useState(true)
-  const [cov, setCov] = useState({ early: 20, late: 7, lead: 3, split: 21 })
+  const [coverOpt, setCoverOpt] = useState('early')
+  const [useDepot, setUseDepot] = useState(true)
+  const [cov, setCov] = useState({ early: 20, late: 7, lead: 3, split: 21, fixed: 10.1 })
+  const [ss, setSs] = useState({ a: 1, boost: 1 })
   const [showRem, setShowRem] = useState(false)
   const [exPlant, setExPlant] = useState('')
   const [exMat, setExMat] = useState('')
@@ -157,13 +172,16 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
   /** ค่า CoverDay ของแต่ละช่วง ใช้แสดงข้างช่องติ๊ก */
   useEffect(() => {
     supabase.from('settings').select('key, value')
-      .in('key', ['month_early_cover', 'month_late_cover', 'lead_time', 'month_split_day'])
+      .in('key', ['month_early_cover', 'month_late_cover', 'lead_time',
+                  'month_split_day', 'cover_fixed', 'ss_class_a', 'ss_booster'])
       .then(({ data }) => {
         const m = Object.fromEntries((data ?? []).map((x) => [x.key, Number(x.value)]))
         setCov({
           early: m.month_early_cover ?? 20, late: m.month_late_cover ?? 7,
           lead: m.lead_time ?? 3, split: m.month_split_day ?? 21,
+          fixed: m.cover_fixed ?? 10.1,
         })
+        setSs({ a: m.ss_class_a ?? 1, boost: m.ss_booster ?? 1 })
       })
   }, [])
 
@@ -198,7 +216,9 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
       const r = (data as RunInfo) ?? { found: false }
       setInfo(r)
       // ใช้โหมดของรอบเดิมถ้ามี ไม่งั้นให้ระบบเดาจากวันที่
-      setEarly(r.early_mode ?? r.suggest_early ?? true)
+      setCoverOpt(r.cover_opt && r.cover_opt !== 'auto'
+        ? r.cover_opt : (r.suggest_cover ?? 'early'))
+      setUseDepot(r.used_depot ?? r.has_depot ?? true)
       if (!r.found || !r.run_id) return
       setRunId(r.run_id)
       const n = await load(r.run_id)
@@ -227,7 +247,8 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
         p_trip_date: tripDate,
         p_snapshot_date: snapshotDate,
         p_created_by: (await supabase.auth.getUser()).data.user?.id ?? null,
-        p_early: early,
+        p_cover: coverOpt,
+        p_use_depot: useDepot,
       })
       if (error) throw new Error(error.message)
       setRunId(data as string)
@@ -464,10 +485,56 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
           <label style={{ fontSize: 13 }}>รถออกวันที่</label>
           <input type="date" value={tripDate} onChange={(e) => setTripDate(e.target.value)} />
           <span style={{ color: 'var(--ink-3)', fontSize: 12.5 }}>ใช้สต็อก ณ {snapshotDate}</span>
+
+          <select value={coverOpt} onChange={(e) => setCoverOpt(e.target.value)}
+            style={{ minWidth: 200 }} title="เกณฑ์ที่ใช้กำหนด CoverDay ของรอบนี้">
+            {COVER_OPTS.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
+          </select>
+
+          <label style={{
+            display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer',
+            padding: '6px 12px', borderRadius: 6,
+            background: useDepot ? 'var(--ok-bg)' : 'transparent',
+            border: `1px solid ${useDepot ? 'var(--ok-line)' : 'var(--rule-2)'}`,
+          }}>
+            <input type="checkbox" checked={useDepot}
+              onChange={(e) => setUseDepot(e.target.checked)} />
+            <span style={{ fontSize: 14 }}>จำกัดตามสต็อกคลัง</span>
+          </label>
+
           <button className={`btn ${meta && !meta.data_changed ? 'ghost' : ''}`}
             onClick={calculate} disabled={busy}>
             {busy ? 'กำลังคำนวณ…' : meta ? 'คำนวณใหม่' : 'คำนวณ'}
           </button>
+        </div>
+
+        {/* อธิบายให้ชัดว่ารอบนี้คิดยังไง ใช้กี่วัน SS กี่ชิ้น */}
+        <div className="note" style={{ marginTop: 12 }}>
+          {(() => {
+            const o = COVER_OPTS.find((x) => x.v === coverOpt)!
+            const fixed = coverOpt === 'early' ? cov.early
+              : coverOpt === 'late' ? cov.late
+              : coverOpt === 'fixed' ? cov.fixed : null
+            return (
+              <>
+                <strong>วิธีคิดรอบนี้</strong>{' — '}
+                {fixed !== null ? (
+                  <>เติมให้พอขาย <strong>{fixed + cov.lead} วัน</strong>{' '}
+                    (CoverDay {fixed} + LeadTime {cov.lead})</>
+                ) : (
+                  <>CoverDay ต่างกันรายสาขาตาม {o.label} แล้วบวก LeadTime {cov.lead} วัน
+                    {' — '}{o.hint}</>
+                )}
+                {' · '}บวก Safety stock <strong>{ss.a} ชิ้น</strong> ต่อบรรทัด
+                {' (หัวเชื้อ ' + ss.boost + ' ชิ้น)'}
+                {' · '}หักของบนชั้นและของระหว่างทางออก
+                {' · '}
+                <strong style={{ color: useDepot ? 'var(--ok)' : 'var(--oil)' }}>
+                  {useDepot ? 'จำกัดไม่ให้เกินสต็อกคลัง' : 'ไม่จำกัดตามสต็อกคลัง'}
+                </strong>
+              </>
+            )
+          })()}
         </div>
         {meta && (
           <div className={`note ${meta.data_changed ? 'bad' : ''}`} style={{ marginTop: 12 }}>
@@ -487,12 +554,13 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
           </div>
         )}
 
-        {info?.suggest_early !== undefined && early !== info.suggest_early && (
+        {info?.suggest_cover && coverOpt !== info.suggest_cover
+          && (coverOpt === 'early' || coverOpt === 'late') && (
           <div className="note" style={{ marginTop: 12 }}>
-            วันที่ {tripDate.slice(-2)} ระบบเดาว่าควรเป็น
-            {info.suggest_early ? ' ต้นเดือน' : ' ปลายเดือน'}
+            วันที่ {tripDate.slice(-2)} ระบบเดาว่าควรใช้เกณฑ์
+            {info.suggest_cover === 'early' ? ' ต้นเดือน' : ' ปลายเดือน'}
             {' '}(ตัดที่วันที่ {cov.split}) แต่คุณเลือก
-            {early ? ' ต้นเดือน' : ' ปลายเดือน'} — จะใช้ตามที่เลือก
+            {coverOpt === 'early' ? ' ต้นเดือน' : ' ปลายเดือน'} — จะใช้ตามที่เลือก
           </div>
         )}
 
@@ -510,8 +578,9 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
                   day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
                 })}
                 {' · '}{info.lines} บรรทัด
-                {info.early_mode !== null && info.early_mode !== undefined &&
-                  ` · โหมด${info.early_mode ? 'ต้นเดือน' : 'ปลายเดือน'}`}
+                {info.cover_opt && info.cover_opt !== 'auto' &&
+                  ` · เกณฑ์${COVER_OPTS.find((x) => x.v === info.cover_opt)?.label ?? info.cover_opt}`}
+                {info.used_depot === false && ' · ไม่จำกัดตามคลัง'}
                 {info.exported ? ' · ออกไฟล์แล้ว' : ' · ยังไม่ได้ออกไฟล์'}
                 {' · ข้อมูลยังไม่เปลี่ยน ไม่ต้องคำนวณใหม่'}
               </>
