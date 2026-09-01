@@ -170,11 +170,27 @@ export default function Import({ snapshotDate, setSnapshotDate }: {
 
     if (kind === 'wms') {
       const { rows, warnings } = parseWMS(grid)
+
+      // รหัสที่ไม่มีใน Master Item จะถูก trigger ข้ามให้ ต้องรู้ว่าข้ามอะไรบ้าง
+      const { data: known } = await supabase.from('items').select('mat_code')
+      const have = new Set((known ?? []).map((r) => r.mat_code as string))
+      const missing = rows.filter((r) => !have.has(r.mat_code))
+
       const bid = await batch(kind, filename, rows.length)
       await upsertChunked('depot_stock',
         rows.map((r) => ({ ...r, batch_id: bid, snapshot_date: snapshotDate })),
         'snapshot_date,mat_code', tick)
-      say(kind, !warnings.length, `นำเข้าสต็อกคลัง ${rows.length} SKU` + (warnings.length ? `\n${warnings.join('\n')}` : ''))
+
+      say(kind, missing.length === 0, [
+        `นำเข้าสต็อกคลัง ${rows.length - missing.length} SKU`,
+        missing.length
+          ? `ข้าม ${missing.length} รหัสที่ไม่มีใน Master Item: ` +
+            missing.slice(0, 10).map((r) => `${r.mat_code} (${r.qty_pcs})`).join(', ') +
+            (missing.length > 10 ? ` และอีก ${missing.length - 10} รหัส` : '') +
+            '\nถ้าเป็นสินค้าที่ต้องส่งสาขา ให้เพิ่มใน Master Item แล้วอัปไฟล์นี้ใหม่'
+          : '',
+        ...warnings,
+      ].filter(Boolean).join('\n'))
       return
     }
 
