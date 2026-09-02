@@ -67,6 +67,9 @@ interface RunInfo {
 }
 
 /** เกณฑ์ CoverDay ที่เลือกได้ในแต่ละรอบ */
+type SortKey = 'none' | 'branch_name' | 'item_desc' | 'on_hand_pcs' | 'in_transit_pcs'
+  | 'sales_per_day' | 'cover_day' | 'doh_before' | 'suggested_pcs' | 'final_pcs' | 'doh_after'
+
 const COVER_OPTS = [
   { v: 'early', label: 'ต้นเดือน',              hint: 'ใช้ตัวเลขต้นเดือนจากหน้าตั้งค่า' },
   { v: 'late',  label: 'ปลายเดือน',             hint: 'ใช้ตัวเลขปลายเดือนจากหน้าตั้งค่า' },
@@ -145,12 +148,19 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
   const [exPlant, setExPlant] = useState('')
   const [exMat, setExMat] = useState('')
   const [ex, setEx] = useState<Explain | null>(null)
+  const [exErr, setExErr] = useState('')
+  const [exBusy, setExBusy] = useState(false)
   const [stOpts, setStOpts] = useState<Option[]>([])
   const [itOpts, setItOpts] = useState<Option[]>([])
   const [meta, setMeta] = useState<Meta | null>(null)
   const [after, setAfter] = useState<ShortAfter[]>([])
   const [off, setOff] = useState<OffAlert[]>([])
   const [only, setOnly] = useState<'order' | 'all'>('order')
+  const [q, setQ] = useState('')
+  const [pickMats, setPickMats] = useState<Set<string>>(new Set())
+  const [showFilter, setShowFilter] = useState(false)
+  const [sortKey, setSortKey] = useState<SortKey>('none')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
   useEffect(() => setTripDate(snapshotDate), [snapshotDate])
 
@@ -355,10 +365,45 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
   /** รายการที่เข้าเทมเพลตหลัก — ตัดสินค้าที่ต้องสั่งแยกออก */
   const mainLines = useMemo(() => lines.filter((l) => !l.off_template), [lines])
 
-  const shown = useMemo(
-    () => only === 'order' ? mainLines.filter((l) => l.final_pcs > 0) : mainLines,
-    [mainLines, only]
-  )
+  /** รายชื่อสินค้าในผลลัพธ์ ใช้ทำปุ่มกรอง เรียงตามจำนวนบรรทัด */
+  const matList = useMemo(() => {
+    const m = new Map<string, { name: string; n: number; qty: number }>()
+    mainLines.forEach((l) => {
+      const e = m.get(l.mat_code) ?? { name: l.item_desc ?? l.mat_code, n: 0, qty: 0 }
+      e.n++; e.qty += l.final_pcs
+      m.set(l.mat_code, e)
+    })
+    return [...m.entries()].sort((a, b) => b[1].n - a[1].n)
+  }, [mainLines])
+
+  function sortBy(k: SortKey) {
+    if (k === sortKey) {
+      if (sortDir === 'desc') setSortDir('asc')
+      else { setSortKey('none'); setSortDir('desc') }   // กดครั้งที่สามกลับเป็นลำดับเดิม
+    } else {
+      setSortKey(k)
+      setSortDir(typeof mainLines[0]?.[k] === 'number' ? 'desc' : 'asc')
+    }
+  }
+
+  const shown = useMemo(() => {
+    let rows = only === 'order' ? mainLines.filter((l) => l.final_pcs > 0) : mainLines
+    if (pickMats.size) rows = rows.filter((l) => pickMats.has(l.mat_code))
+    const t = q.trim().toLowerCase()
+    if (t) rows = rows.filter((l) =>
+      `${l.branch_name ?? ''} ${l.item_desc ?? ''} ${l.plant_code} ${l.mat_code} ${l.flag ?? ''}`
+        .toLowerCase().includes(t))
+
+    if (sortKey === 'none') return rows
+    const dir = sortDir === 'asc' ? 1 : -1
+    return [...rows].sort((a, b) => {
+      const x = a[sortKey], y = b[sortKey]
+      if (x === null || x === undefined) return 1
+      if (y === null || y === undefined) return -1
+      if (typeof x === 'number' && typeof y === 'number') return (x - y) * dir
+      return String(x).localeCompare(String(y), 'th') * dir
+    })
+  }, [mainLines, only, pickMats, q, sortKey, sortDir])
 
   /** เตือนถ้ายังไม่ได้อัป Master Item ใหม่ — จำนวนต่อลังจะเป็น 1 หมด */
   const caseWarning = useMemo(
@@ -441,12 +486,21 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
   /** ตรวจว่าบรรทัดหนึ่งคำนวณออกมาแบบนี้เพราะอะไร */
   async function explain() {
     if (!exPlant.trim() || !exMat.trim()) return
-    const { data, error } = await supabase.rpc('explain_line', {
-      p_plant: exPlant.trim(), p_mat: exMat.trim(), p_trip: tripDate,
-    })
-    if (error) { setErr(error.message); return }
-    setEx(data as Explain)
+    setExBusy(true); setExErr(''); setEx(null)
+    try {
+      const { data, error } = await supabase.rpc('explain_line', {
+        p_plant: exPlant.trim(), p_mat: exMat.trim(), p_trip: tripDate,
+      })
+      if (error) { setExErr(error.message); return }
+      if (!data) { setExErr('ฐานข้อมูลไม่ได้ส่งข้อมูลกลับมา'); return }
+      setEx(data as Explain)
+    } catch (e) {
+      setExErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setExBusy(false)
+    }
   }
+
 
   /** สินค้าที่ใช้เทมเพลตคนละแบบ ออกเป็นไฟล์ต่างหาก */
   async function exportOffTemplate() {
@@ -1023,21 +1077,87 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
           )}
 
           <div className="row" style={{ marginBottom: 10 }}>
-            <button className={`btn ${only === 'order' ? '' : 'ghost'}`} onClick={() => setOnly('order')}>เฉพาะที่ต้องเติม</button>
-            <button className={`btn ${only === 'all' ? '' : 'ghost'}`} onClick={() => setOnly('all')}>ทั้งหมด</button>
+            <button className={`btn ${only === 'order' ? '' : 'ghost'}`}
+              onClick={() => setOnly('order')}>เฉพาะที่ต้องเติม</button>
+            <button className={`btn ${only === 'all' ? '' : 'ghost'}`}
+              onClick={() => setOnly('all')}>ทั้งหมด</button>
+
+            <input type="text" placeholder="ค้นหาสาขา สินค้า หรือสถานะ" value={q}
+              onChange={(e) => setQ(e.target.value)} style={{ width: 230 }} />
+
+            <button className={`btn ${pickMats.size || showFilter ? '' : 'ghost'}`}
+              onClick={() => setShowFilter(!showFilter)}>
+              กรองสินค้า{pickMats.size ? ` (${pickMats.size})` : ''}
+            </button>
+
+            {(pickMats.size > 0 || q || sortKey !== 'none') && (
+              <button className="btn ghost" onClick={() => {
+                setPickMats(new Set()); setQ(''); setSortKey('none'); setSortDir('desc')
+              }}>ล้าง</button>
+            )}
+
+            <span style={{ fontSize: 13, color: 'var(--ink-3)' }}>
+              {shown.length} บรรทัด · {shown.reduce((a, l) => a + l.final_pcs, 0).toLocaleString()} ชิ้น
+            </span>
+
             <span style={{ flex: 1 }} />
-            <button className="btn" onClick={exportTemplate} disabled={!stats.pieces}>ดาวน์โหลดเทมเพลต</button>
+            <button className="btn" onClick={exportTemplate} disabled={!stats.pieces}>
+              ดาวน์โหลดเทมเพลต
+            </button>
           </div>
+
+          {showFilter && (
+            <div className="card" style={{ marginBottom: 10, padding: '16px 18px' }}>
+              <p className="hint" style={{ marginBottom: 10 }}>
+                กดชื่อสินค้าเพื่อดูเฉพาะตัวนั้น กดหลายตัวได้ · ตัวเลขคือจำนวนบรรทัดและชิ้นที่ต้องส่ง
+              </p>
+              <div className="row" style={{ gap: 6 }}>
+                {matList.map(([mat, m]) => (
+                  <button key={mat}
+                    className={`btn ${pickMats.has(mat) ? '' : 'ghost'}`}
+                    style={{ padding: '5px 12px', fontSize: 13 }}
+                    onClick={() => setPickMats((p) => {
+                      const n = new Set(p)
+                      n.has(mat) ? n.delete(mat) : n.add(mat)
+                      return n
+                    })}>
+                    {m.name}
+                    <span style={{ opacity: .6, marginLeft: 7 }}>{m.n} · {m.qty}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="tw">
             <table>
               <thead>
                 <tr>
-                  <th>สาขา</th><th>สินค้า</th><th>สถานะ</th>
-                  <th className="num">คงเหลือ</th><th className="num">ระหว่างทาง</th>
-                  <th className="num">ขาย/วัน</th><th className="num">คุ้ม(วัน)</th>
-                  <th>DOH ก่อน</th><th className="num">ระบบคำนวณ</th>
-                  <th className="num">ยอดส่งจริง</th><th>DOH หลัง</th>
+                  {([
+                    ['branch_name', 'สาขา', false],
+                    ['item_desc', 'สินค้า', false],
+                    ['none', 'สถานะ', false],
+                    ['on_hand_pcs', 'คงเหลือ', true],
+                    ['in_transit_pcs', 'ระหว่างทาง', true],
+                    ['sales_per_day', 'ขาย/วัน', true],
+                    ['cover_day', 'คุ้ม(วัน)', true],
+                    ['doh_before', 'DOH ก่อน', false],
+                    ['suggested_pcs', 'ระบบคำนวณ', true],
+                    ['final_pcs', 'ยอดส่งจริง', true],
+                    ['doh_after', 'DOH หลัง', false],
+                  ] as [SortKey, string, boolean][]).map(([k, label, num]) => (
+                    <th key={label} className={num ? 'num' : undefined}
+                      style={k === 'none' ? undefined : { cursor: 'pointer', userSelect: 'none' }}
+                      title={k === 'none' ? undefined : 'กดเพื่อเรียง'}
+                      onClick={() => k !== 'none' && sortBy(k)}>
+                      {label}
+                      {sortKey === k && (
+                        <span style={{ marginLeft: 4, color: 'var(--brand)' }}>
+                          {sortDir === 'desc' ? '▼' : '▲'}
+                        </span>
+                      )}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -1049,9 +1169,15 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
                       onClick={(e) => {
                         if ((e.target as HTMLElement).tagName === 'INPUT') return
                         setExPlant(l.plant_code); setExMat(l.mat_code)
+                        setExBusy(true); setExErr(''); setEx(null)
                         void supabase.rpc('explain_line', {
                           p_plant: l.plant_code, p_mat: l.mat_code, p_trip: tripDate,
-                        }).then(({ data }) => setEx(data as Explain))
+                        }).then(({ data, error }) => {
+                          if (error) setExErr(error.message)
+                          else if (!data) setExErr('ฐานข้อมูลไม่ได้ส่งข้อมูลกลับมา')
+                          else setEx(data as Explain)
+                          setExBusy(false)
+                        })
                       }}>
                       <td>{l.branch_name ?? l.plant_code}</td>
                       <td>{l.item_desc ?? l.mat_code}</td>
@@ -1086,9 +1212,22 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
               <Picker options={itOpts} value={exMat} onChange={setExMat}
                 placeholder="พิมพ์ชื่อสินค้าหรือรหัส" width={320} />
               <button className="btn" onClick={() => void explain()}
-                disabled={!exPlant || !exMat}>ตรวจ</button>
+                disabled={!exPlant || !exMat || exBusy}>
+                {exBusy ? 'กำลังตรวจ…' : 'ตรวจ'}
+              </button>
               {ex && <button className="btn ghost" onClick={() => setEx(null)}>ปิด</button>}
             </div>
+
+            {exErr && (
+              <div className="note bad" style={{ marginTop: 14, whiteSpace: 'pre-wrap' }}>
+                {exErr}
+                {/incoming_detail|does not exist|ไม่รู้จัก/.test(exErr) && (
+                  <div style={{ marginTop: 8 }}>
+                    ยังรัน migration ไม่ครบ — ต้องรัน migration_47 ก่อน migration_48
+                  </div>
+                )}
+              </div>
+            )}
 
             {ex && !ex.found && (
               <div className="note bad" style={{ marginTop: 14 }}>{ex.reason}</div>
