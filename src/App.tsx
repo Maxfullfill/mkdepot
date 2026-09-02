@@ -37,17 +37,7 @@ export default function App() {
   useEffect(() => { tabRef.current = tab }, [tab])
   const [snapshotDate, setSnapshotDate] = useState(today())
   const [preset, setPreset] = useState<Preset | undefined>()
-  const [moreOpen, setMoreOpen] = useState(false)
-  const moreRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (!moreOpen) return
-    const away = (e: MouseEvent) => {
-      if (moreRef.current && !moreRef.current.contains(e.target as Node)) setMoreOpen(false)
-    }
-    document.addEventListener('mousedown', away)
-    return () => document.removeEventListener('mousedown', away)
-  }, [moreOpen])
 
   /** เปลี่ยนหน้าแบบมอร์ฟ — เบราว์เซอร์ถ่ายภาพหน้าเดิมแล้วค่อย ๆ กลายเป็นหน้าใหม่
    *  flushSync บังคับให้ DOM อัปเดตเสร็จภายในคอลแบ็ก ไม่งั้นภาพจะไม่ตรง
@@ -123,12 +113,9 @@ export default function App() {
 
   /** งานประจำวันเป็นลำดับขั้น แสดงเป็นวงกลมตัวเลข ตัวที่เปิดอยู่กางชื่อออกมา
    *  ที่เหลือรวมไว้ในเมนูรายงาน จะได้ไม่ล้นแถบ */
-  /** เมนูหลักโชว์ชื่อเต็ม ที่เหลือรวมในเมนูย่อย */
-  const PRIMARY: Tab[] = ['home', 'import', 'run', 'transfer', 'transferB', 'shortage']
-  const all = groups.flatMap((g) => g.items)
-  const mainNav = PRIMARY.map((id) => all.find((x) => x.id === id)).filter(Boolean) as Item[]
-  const moreNav = all.filter((x) => !PRIMARY.includes(x.id))
-  const moreActive = moreNav.some((x) => x.id === tab)
+  /** แสดงทุกเมนูในแถวเดียว คั่นกลุ่มด้วยเส้นบาง */
+  const navItems = groups.flatMap((g, gi) =>
+    g.items.map((it, ii) => ({ ...it, newGroup: ii === 0 && gi > 0 })))
   const initial = (me.username || '?').trim().charAt(0).toUpperCase()
 
   return (
@@ -150,35 +137,15 @@ export default function App() {
           </div>
 
           <nav className="topnav">
-            {mainNav.map((t) => (
-              <button key={t.id} aria-current={tab === t.id} onClick={() => navigate(t.id)}>
-                {t.step && <span className="step">{t.step}</span>}
-                {t.label}
-              </button>
+            {navItems.map((t) => (
+              <span key={t.id} className="navcell">
+                {t.newGroup && <i className="sep" aria-hidden="true" />}
+                <button aria-current={tab === t.id} onClick={() => navigate(t.id)}>
+                  {t.step && <span className="step">{t.step}</span>}
+                  {t.label}
+                </button>
+              </span>
             ))}
-
-            <div className="navmore" ref={moreRef}>
-              <button aria-current={moreActive} onClick={() => setMoreOpen(!moreOpen)}>
-                {moreActive ? moreNav.find((x) => x.id === tab)?.label : 'อื่น ๆ'}
-                <svg viewBox="0 0 24 24" width="12" height="12" fill="none"
-                  style={{ transform: moreOpen ? 'rotate(180deg)' : undefined,
-                           transition: 'transform .18s', marginLeft: 4 }}>
-                  <path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="2.4"
-                    strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </button>
-
-              {moreOpen && (
-                <div className="navmenu">
-                  {moreNav.map((t) => (
-                    <button key={t.id} aria-current={tab === t.id}
-                      onClick={() => { setMoreOpen(false); navigate(t.id) }}>
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
           </nav>
 
           <div className="who">
