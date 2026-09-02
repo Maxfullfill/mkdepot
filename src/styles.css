@@ -111,19 +111,66 @@ body {
 .navcell { display: flex; align-items: center; }
 .navcell .sep { width: 1px; height: 16px; background: rgba(255,255,255,.14); margin: 0 5px; flex: none; }
 
-.topnav button {
-  display: flex; align-items: center; gap: 7px;
-  padding: 8px 16px; border: 0; background: none; cursor: pointer;
-  font-family: var(--sans); font-size: 14px; color: rgba(255,255,255,.62);
-  white-space: nowrap; border-radius: var(--pill);
-  transition: color .16s, background .16s;
+/* ปุ่มภาพรวม */
+.nav-home {
+  padding: 9px 20px; border: 0; border-radius: var(--pill);
+  background: transparent; cursor: pointer; flex: none;
+  font-family: var(--sans); font-size: 14.5px; color: rgba(255,255,255,.7);
+  transition: background .16s, color .16s;
 }
-.topnav button:hover { color: #fff; background: rgba(255,255,255,.08); }
-.topnav button[aria-current='true'] {
-  background: var(--green); color: #fff; font-weight: 600;
-  box-shadow: 0 4px 14px rgba(15, 169, 104, .42);
+.nav-home:hover { color: #fff; background: rgba(255,255,255,.08); }
+.nav-home[aria-current='true'] { background: #fff; color: var(--ink); font-weight: 600; }
+
+/* ขั้นตอนงานประจำวัน — วงกลมตัวเลข ตัวที่เปิดอยู่กางชื่อ */
+.nav-step {
+  display: flex; align-items: center; gap: 9px; flex: none;
+  padding: 5px; padding-right: 5px; border: 0; border-radius: var(--pill);
+  background: transparent; cursor: pointer;
+  font-family: var(--sans); font-size: 14.5px; color: rgba(255,255,255,.72);
+  transition: background .18s, color .18s, padding .18s;
 }
-.topnav .step { font-family: var(--mono); font-size: 11px; opacity: .65; }
+.nav-step .dot {
+  width: 30px; height: 30px; flex: none; border-radius: 50%;
+  display: grid; place-items: center;
+  font-family: var(--mono); font-size: 13px; font-weight: 600;
+  border: 1.5px solid rgba(255,255,255,.28); color: rgba(255,255,255,.75);
+  transition: background .18s, border-color .18s, color .18s;
+}
+.nav-step .lbl { padding-right: 12px; white-space: nowrap; }
+.nav-step:hover { background: rgba(255,255,255,.08); color: #fff; }
+.nav-step:hover .dot { border-color: rgba(255,255,255,.55); color: #fff; }
+
+.nav-step.done .dot {
+  background: var(--brand); border-color: var(--brand); color: #fff;
+}
+.nav-step.on {
+  background: #fff; color: var(--ink); font-weight: 600;
+}
+.nav-step.on .dot {
+  background: var(--ink); border-color: var(--ink); color: #fff;
+}
+
+/* ปุ่มเมนูรายงาน */
+.nav-more {
+  display: flex; align-items: center; gap: 7px; flex: none;
+  padding: 9px 16px; border: 0; border-radius: var(--pill);
+  background: transparent; cursor: pointer;
+  font-family: var(--sans); font-size: 14.5px; color: rgba(255,255,255,.72);
+  transition: background .16s, color .16s;
+}
+.nav-more:hover { color: #fff; background: rgba(255,255,255,.08); }
+.nav-more[aria-current='true'] {
+  background: var(--brand); color: #fff; font-weight: 600;
+}
+
+.navcell .sep, .topnav > .sep {
+  width: 1px; height: 20px; background: rgba(255,255,255,.16);
+  margin: 0 8px; flex: none;
+}
+.avatar.in-nav {
+  width: 32px; height: 32px; margin-left: 8px;
+  background: var(--brand); box-shadow: 0 2px 8px rgba(18,165,107,.4);
+}
 
 .who { display: flex; align-items: center; gap: 12px; font-size: 13.5px; color: var(--ink-2); }
 .who button {
@@ -594,27 +641,22 @@ td.num input { width: 74px; text-align: right; font-family: var(--mono); padding
 /* ── แผงเข้ม ─────────────────────────────────────────────────────── */
 
 .panel-dark {
-  background: var(--nav); border: 0; color: rgba(255,255,255,.9);
-  box-shadow: 0 12px 34px rgba(19, 26, 23, .22);
+  background: var(--card);
+  border: 1px solid var(--rule);
+  border-left: 4px solid var(--red);
+  color: var(--ink);
 }
-.panel-dark:hover { box-shadow: 0 16px 40px rgba(19, 26, 23, .26); }
-.panel-dark h3 { color: #fff; }
-.panel-dark .hint { color: rgba(255,255,255,.5); }
-.panel-dark .note {
-  background: rgba(255,255,255,.07); color: rgba(255,255,255,.88);
+.panel-dark h3 { color: var(--ink); }
+.panel-dark h3::before {
+  content: ''; display: inline-block; width: 8px; height: 8px;
+  border-radius: 50%; background: var(--red); margin-right: 9px;
+  vertical-align: middle; animation: pulse 2s ease-in-out infinite;
 }
-.panel-dark .note.bad {
-  background: rgba(224, 80, 58, .18); color: #ffb9ab;
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(224, 80, 58, .5); }
+  50%      { box-shadow: 0 0 0 6px rgba(224, 80, 58, 0); }
 }
-.panel-dark button.note:hover { background: rgba(255,255,255,.13); }
-.panel-dark table td { border-color: rgba(255,255,255,.09); color: rgba(255,255,255,.88); }
-.panel-dark thead th { background: transparent; color: rgba(255,255,255,.45); border-color: rgba(255,255,255,.14); }
-.panel-dark tbody tr:hover { background: rgba(255,255,255,.05); }
-.panel-dark .tag { background: rgba(255,255,255,.12); color: rgba(255,255,255,.9); }
-.panel-dark button.btn.ghost {
-  background: rgba(255,255,255,.12); color: #fff;
-}
-.panel-dark button.btn.ghost:hover { background: rgba(255,255,255,.2); color: #fff; }
+.panel-dark .hint { color: var(--ink-3); }
 
 @media (max-width: 760px) {
   .page-head { margin-bottom: 20px; }
