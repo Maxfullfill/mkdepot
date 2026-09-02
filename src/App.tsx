@@ -121,13 +121,14 @@ export default function App() {
     },
   ]
 
-  /** เมนูหลักอยู่ในแถบ ส่วนที่ใช้ไม่บ่อยย้ายไปเมนูย่อย จะได้ไม่ล้น */
-  const PRIMARY: Tab[] = ['home', 'import', 'run', 'transfer', 'transferB', 'shortage']
+  /** งานประจำวันเป็นลำดับขั้น แสดงเป็นวงกลมตัวเลข ตัวที่เปิดอยู่กางชื่อออกมา
+   *  ที่เหลือรวมไว้ในเมนูรายงาน จะได้ไม่ล้นแถบ */
+  const STEPS: Tab[] = ['import', 'run', 'transfer', 'transferB']
   const all = groups.flatMap((g) => g.items)
-  const mainNav = PRIMARY.map((id) => all.find((x) => x.id === id)).filter(Boolean) as Item[]
-  const moreNav = all.filter((x) => !PRIMARY.includes(x.id))
+  const stepNav = STEPS.map((id) => all.find((x) => x.id === id)).filter(Boolean) as Item[]
+  const moreNav = all.filter((x) => x.id !== 'home' && !STEPS.includes(x.id))
   const moreActive = moreNav.some((x) => x.id === tab)
-
+  const stepIdx = STEPS.indexOf(tab as Tab)
   const initial = (me.username || '?').trim().charAt(0).toUpperCase()
 
   return (
@@ -149,42 +150,58 @@ export default function App() {
           </div>
 
           <nav className="topnav">
-            {mainNav.map((t, i) => (
-              <span key={t.id} className="navcell">
-                {i === 1 && <i className="sep" aria-hidden="true" />}
-                <button aria-current={tab === t.id} onClick={() => navigate(t.id)}>
-                  {t.step && <span className="step">{t.step}</span>}
-                  {t.label}
-                </button>
-              </span>
-            ))}
+            <button className="nav-home" aria-current={tab === 'home'}
+              onClick={() => navigate('home')}>ภาพรวม</button>
 
-            <span className="navcell">
-              <i className="sep" aria-hidden="true" />
-              <div className="navmore" ref={moreRef}>
-                <button aria-current={moreActive}
-                  onClick={() => setMoreOpen(!moreOpen)}>
-                  {moreActive ? moreNav.find((x) => x.id === tab)?.label : 'อื่น ๆ'}
-                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none"
-                    style={{ transform: moreOpen ? 'rotate(180deg)' : undefined,
-                             transition: 'transform .18s' }}>
-                    <path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="2.2"
-                      strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </button>
+            <i className="sep" aria-hidden="true" />
 
-                {moreOpen && (
-                  <div className="navmenu">
-                    {moreNav.map((t) => (
-                      <button key={t.id} aria-current={tab === t.id}
-                        onClick={() => { setMoreOpen(false); navigate(t.id) }}>
-                        {t.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </span>
+            {stepNav.map((t, i) => {
+              const active = tab === t.id
+              const done = stepIdx >= 0 && i < stepIdx
+              return (
+                <button key={t.id} className={`nav-step${active ? ' on' : ''}${done ? ' done' : ''}`}
+                  aria-current={active} title={t.label}
+                  onClick={() => navigate(t.id)}>
+                  <span className="dot">
+                    {done ? (
+                      <svg viewBox="0 0 24 24" width="13" height="13" fill="none">
+                        <path d="M20 6 9 17l-5-5" stroke="currentColor" strokeWidth="3"
+                          strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    ) : t.step}
+                  </span>
+                  {active && <span className="lbl">{t.label}</span>}
+                </button>
+              )
+            })}
+
+            <span style={{ flex: 1 }} />
+
+            <div className="navmore" ref={moreRef}>
+              <button className="nav-more" aria-current={moreActive}
+                onClick={() => setMoreOpen(!moreOpen)}>
+                {moreActive ? moreNav.find((x) => x.id === tab)?.label : 'รายงาน'}
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none"
+                  style={{ transform: moreOpen ? 'rotate(180deg)' : undefined,
+                           transition: 'transform .18s' }}>
+                  <path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="2.2"
+                    strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+
+              {moreOpen && (
+                <div className="navmenu">
+                  {moreNav.map((t) => (
+                    <button key={t.id} aria-current={tab === t.id}
+                      onClick={() => { setMoreOpen(false); navigate(t.id) }}>
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <span className="avatar in-nav" title={me.username}>{initial}</span>
           </nav>
 
           <div className="who">
@@ -207,7 +224,6 @@ export default function App() {
             </button>
 
             <span className="userchip">
-              <span className="avatar">{initial}</span>
               <span className="uname">
                 {me.username}
                 {me.role === 'admin' && <em>ผู้ดูแล</em>}
