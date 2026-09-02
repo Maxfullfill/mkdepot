@@ -85,20 +85,20 @@ body {
   border-radius: 26px 26px 0 0;
 }
 .bar {
-  display: flex; align-items: center; gap: 18px;
-  padding: 12px 22px; min-height: 62px;
+  display: flex; align-items: center; gap: 14px;
+  padding: 10px 18px; min-height: 58px;
 }
 
 /* โลโก้ */
 .brand { display: flex; align-items: center; gap: 10px; flex: none; }
 .brand .logo {
-  width: 34px; height: 34px; flex: none; border-radius: 10px;
+  width: 32px; height: 32px; flex: none; border-radius: 10px;
   background: var(--brand); color: #fff;
   display: grid; place-items: center;
   box-shadow: 0 3px 10px rgba(18, 165, 107, .32);
 }
 .brand-txt { display: flex; flex-direction: column; line-height: 1.2; }
-.brand-txt b { font-size: 15px; font-weight: 700; letter-spacing: -.03em; }
+.brand-txt b { font-size: 14px; font-weight: 700; letter-spacing: -.03em; }
 .brand-txt i { font-style: normal; font-size: 10.5px; color: var(--ink-3); }
 
 /* แคปซูลเมนู */
@@ -108,26 +108,26 @@ body {
   padding: 4px; flex: 1 1 auto; min-width: 0;
   justify-content: center;
 }
-.topnav > button,
-.topnav .navmore > button {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 8px 14px; border: 0; border-radius: var(--pill);
+.navcell { display: flex; align-items: center; flex: none; }
+.navcell .sep {
+  width: 1px; height: 17px; background: rgba(255,255,255,.16);
+  margin: 0 5px; flex: none;
+}
+.topnav button {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 7px 11px; border: 0; border-radius: var(--pill);
   background: transparent; cursor: pointer; white-space: nowrap;
-  font-family: var(--sans); font-size: 14px; color: rgba(255,255,255,.7);
+  font-family: var(--sans); font-size: 12.5px; color: rgba(255,255,255,.72);
   transition: background .16s, color .16s;
 }
-.topnav > button:hover,
-.topnav .navmore > button:hover { color: #fff; background: rgba(255,255,255,.09); }
-.topnav > button[aria-current='true'] {
+.topnav button:hover { color: #fff; background: rgba(255,255,255,.09); }
+.topnav button[aria-current='true'] {
   background: #fff; color: var(--ink); font-weight: 600;
 }
-.topnav .navmore > button[aria-current='true'] {
-  background: var(--brand); color: #fff; font-weight: 600;
-}
 .topnav .step {
-  font-family: var(--mono); font-size: 11px; opacity: .6; font-weight: 600;
+  font-family: var(--mono); font-size: 10px; opacity: .55; font-weight: 600;
 }
-.topnav > button[aria-current='true'] .step { opacity: .5; }
+.topnav button[aria-current='true'] .step { opacity: .45; }
 
 /* เมนูย่อย */
 .navmore { position: relative; flex: none; }
@@ -155,7 +155,7 @@ body {
 /* ฝั่งขวา */
 .who { display: flex; align-items: center; gap: 8px; flex: none; }
 .iconbtn {
-  width: 36px; height: 36px; flex: none; padding: 0;
+  width: 34px; height: 34px; flex: none; padding: 0;
   border: 1px solid var(--rule); border-radius: 50%;
   background: var(--card); color: var(--ink-2);
   display: grid; place-items: center; cursor: pointer;
