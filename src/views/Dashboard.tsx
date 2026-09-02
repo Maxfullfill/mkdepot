@@ -59,7 +59,9 @@ const FILE_LABEL: Record<string, string> = {
   power_bi: 'สต็อกสาขา', trips: 'เที่ยวรถ', me2n: 'ME2N', wms: 'สต็อกคลัง',
 }
 
-export default function Dashboard({ go }: { go: (tab: string) => void }) {
+export default function Dashboard({ go }: {
+  go: (tab: string, preset?: { kind?: string; name?: string }) => void
+}) {
   const [d, setD] = useState<Sum | null>(null)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(true)
@@ -185,8 +187,10 @@ export default function Dashboard({ go }: { go: (tab: string) => void }) {
             {k.doh ?? '—'}{delta(dDoh, false)}
           </dd>
         </div>
-        <div className="stat">
-          <dt>ของขาดตอนนี้</dt>
+        <div className="stat" style={{ cursor: 'pointer' }}
+          onClick={() => go('shortage', { kind: 'Class A' })}
+          title="ดูรายละเอียดของขาด">
+          <dt>ของขาดตอนนี้ →</dt>
           <dd style={{ color: k.short ? 'var(--alarm)' : 'var(--ok)' }}>{k.short}</dd>
         </div>
         <div className="stat">
@@ -421,7 +425,14 @@ export default function Dashboard({ go }: { go: (tab: string) => void }) {
                     <strong>{b.pct}%</strong>
                   </td>
                   <td style={{ width: 110 }}>
-                    {b.short > 0 && <span className="tag alarm">ขาด {b.short}</span>}
+                    {b.short > 0 && (
+                      <button className="tag alarm"
+                        style={{ border: 0, cursor: 'pointer', font: 'inherit' }}
+                        title="ดูว่าขาดที่สาขาไหนบ้าง"
+                        onClick={() => go('shortage', { kind: 'หัวเชื้อ', name: b.name })}>
+                        ขาด {b.short} →
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -462,9 +473,17 @@ export default function Dashboard({ go }: { go: (tab: string) => void }) {
               ) : d.top_short!.map((x) => (
                 <tr key={x.name}>
                   <td>{x.name}</td>
-                  <td className="num" style={{ width: 100, color: 'var(--alarm)' }}>
-                    <strong>{x.stations}</strong>
-                    <span style={{ color: 'var(--ink-3)', fontSize: 12 }}> สาขา</span>
+                  <td className="num" style={{ width: 110 }}>
+                    <button
+                      style={{
+                        border: 0, background: 'none', cursor: 'pointer', padding: 0,
+                        font: 'inherit', color: 'var(--alarm)',
+                      }}
+                      title="ดูว่าขาดที่สาขาไหนบ้าง"
+                      onClick={() => go('shortage', { kind: 'Class A', name: x.name })}>
+                      <strong style={{ fontFamily: 'var(--mono)' }}>{x.stations}</strong>
+                      <span style={{ color: 'var(--ink-3)', fontSize: 12 }}> สาขา →</span>
+                    </button>
                   </td>
                 </tr>
               ))}
