@@ -123,12 +123,12 @@ export default function App() {
 
   /** งานประจำวันเป็นลำดับขั้น แสดงเป็นวงกลมตัวเลข ตัวที่เปิดอยู่กางชื่อออกมา
    *  ที่เหลือรวมไว้ในเมนูรายงาน จะได้ไม่ล้นแถบ */
-  const STEPS: Tab[] = ['import', 'run', 'transfer', 'transferB']
+  /** เมนูหลักโชว์ชื่อเต็ม ที่เหลือรวมในเมนูย่อย */
+  const PRIMARY: Tab[] = ['home', 'import', 'run', 'transfer', 'transferB', 'shortage']
   const all = groups.flatMap((g) => g.items)
-  const stepNav = STEPS.map((id) => all.find((x) => x.id === id)).filter(Boolean) as Item[]
-  const moreNav = all.filter((x) => x.id !== 'home' && !STEPS.includes(x.id))
+  const mainNav = PRIMARY.map((id) => all.find((x) => x.id === id)).filter(Boolean) as Item[]
+  const moreNav = all.filter((x) => !PRIMARY.includes(x.id))
   const moreActive = moreNav.some((x) => x.id === tab)
-  const stepIdx = STEPS.indexOf(tab as Tab)
   const initial = (me.username || '?').trim().charAt(0).toUpperCase()
 
   return (
@@ -137,54 +137,33 @@ export default function App() {
         <div className="bar">
           <div className="brand">
             <span className="logo" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none">
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none">
                 <path d="M4 17V9m0 0 8-5 8 5m-16 0 8 5 8-5m0 0v8m-8 5v-8"
                   stroke="currentColor" strokeWidth="2"
                   strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </span>
             <span className="brand-txt">
-              <h1>เติมสินค้า</h1>
-              <p>คลังแม่กลอง</p>
+              <b>เติมสินค้า</b>
+              <i>คลังแม่กลอง</i>
             </span>
           </div>
 
           <nav className="topnav">
-            <button className="nav-home" aria-current={tab === 'home'}
-              onClick={() => navigate('home')}>ภาพรวม</button>
-
-            <i className="sep" aria-hidden="true" />
-
-            {stepNav.map((t, i) => {
-              const active = tab === t.id
-              const done = stepIdx >= 0 && i < stepIdx
-              return (
-                <button key={t.id} className={`nav-step${active ? ' on' : ''}${done ? ' done' : ''}`}
-                  aria-current={active} title={t.label}
-                  onClick={() => navigate(t.id)}>
-                  <span className="dot">
-                    {done ? (
-                      <svg viewBox="0 0 24 24" width="13" height="13" fill="none">
-                        <path d="M20 6 9 17l-5-5" stroke="currentColor" strokeWidth="3"
-                          strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    ) : t.step}
-                  </span>
-                  {active && <span className="lbl">{t.label}</span>}
-                </button>
-              )
-            })}
-
-            <span style={{ flex: 1 }} />
+            {mainNav.map((t) => (
+              <button key={t.id} aria-current={tab === t.id} onClick={() => navigate(t.id)}>
+                {t.step && <span className="step">{t.step}</span>}
+                {t.label}
+              </button>
+            ))}
 
             <div className="navmore" ref={moreRef}>
-              <button className="nav-more" aria-current={moreActive}
-                onClick={() => setMoreOpen(!moreOpen)}>
-                {moreActive ? moreNav.find((x) => x.id === tab)?.label : 'รายงาน'}
-                <svg viewBox="0 0 24 24" width="13" height="13" fill="none"
+              <button aria-current={moreActive} onClick={() => setMoreOpen(!moreOpen)}>
+                {moreActive ? moreNav.find((x) => x.id === tab)?.label : 'อื่น ๆ'}
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none"
                   style={{ transform: moreOpen ? 'rotate(180deg)' : undefined,
-                           transition: 'transform .18s' }}>
-                  <path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="2.2"
+                           transition: 'transform .18s', marginLeft: 4 }}>
+                  <path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="2.4"
                     strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               </button>
@@ -200,39 +179,35 @@ export default function App() {
                 </div>
               )}
             </div>
-
-            <span className="avatar in-nav" title={me.username}>{initial}</span>
           </nav>
 
           <div className="who">
-            <button className="iconbtn" title="นำเข้าข้อมูล"
-              onClick={() => navigate('import')}>
-              <svg viewBox="0 0 24 24" width="17" height="17" fill="none">
+            <button className="iconbtn" title="นำเข้าข้อมูล" onClick={() => navigate('import')}>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none">
                 <path d="M12 16V4m0 0L8 8m4-4 4 4M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2"
-                  stroke="currentColor" strokeWidth="1.8"
+                  stroke="currentColor" strokeWidth="1.9"
                   strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </button>
-            <button className="iconbtn" title="ตั้งค่าการคำนวณ"
-              onClick={() => navigate('settings')}>
-              <svg viewBox="0 0 24 24" width="17" height="17" fill="none">
-                <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.8" />
-                <path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 7.9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 3 14.1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 7.9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V2a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H22a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1Z"
-                  stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"
-                  strokeLinejoin="round" opacity=".9" />
+            <button className="iconbtn" title="ตั้งค่าการคำนวณ" onClick={() => navigate('settings')}>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none">
+                <circle cx="12" cy="12" r="3.2" stroke="currentColor" strokeWidth="1.9" />
+                <path d="M12 2.5v2M12 19.5v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2.5 12h2M19.5 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"
+                  stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
               </svg>
             </button>
 
-            <span className="userchip">
+            <span className="userchip" title={me.username}>
+              <span className="avatar">{initial}</span>
               <span className="uname">
-                {me.username}
-                {me.role === 'admin' && <em>ผู้ดูแล</em>}
+                <b>{me.username}</b>
+                {me.role === 'admin' && <i>ผู้ดูแล</i>}
               </span>
               <button className="iconbtn sm" title="ออกจากระบบ"
                 onClick={() => supabase.auth.signOut()}>
                 <svg viewBox="0 0 24 24" width="15" height="15" fill="none">
                   <path d="M15 17l5-5-5-5M20 12H9M12 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h6"
-                    stroke="currentColor" strokeWidth="1.8"
+                    stroke="currentColor" strokeWidth="1.9"
                     strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               </button>
