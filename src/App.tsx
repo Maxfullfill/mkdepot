@@ -10,6 +10,7 @@ import Transfers from './views/Transfers'
 import TransfersB from './views/TransfersB'
 import Depot from './views/Depot'
 import Receiving from './views/Receiving'
+import Shortage from './views/Shortage'
 import KpiPage from './views/Kpi'
 import Settings from './views/Settings'
 import Users from './views/Users'
@@ -19,7 +20,11 @@ const today = () => new Date().toISOString().slice(0, 10)
 type VTDoc = Document & {
   startViewTransition?: (cb: () => void) => { finished: Promise<void> }
 }
-type Tab = 'home' | 'import' | 'run' | 'transfer' | 'transferB' | 'receiving' | 'depot' | 'kpi' | 'settings' | 'users'
+type Tab = 'home' | 'import' | 'run' | 'transfer' | 'transferB' | 'receiving'
+  | 'shortage' | 'depot' | 'kpi' | 'settings' | 'users'
+
+/** ตัวกรองที่ส่งข้ามหน้าได้ เช่นกดตัวเลขในหน้าภาพรวมแล้วเด้งไปหน้าของขาด */
+export interface Preset { kind?: string; name?: string }
 interface Me { username: string; role: 'staff' | 'admin'; is_active: boolean }
 interface Item { id: Tab; label: string; step?: string }
 
@@ -31,13 +36,14 @@ export default function App() {
   const tabRef = useRef<Tab>('home')
   useEffect(() => { tabRef.current = tab }, [tab])
   const [snapshotDate, setSnapshotDate] = useState(today())
+  const [preset, setPreset] = useState<Preset | undefined>()
 
   /** เปลี่ยนหน้าแบบมอร์ฟ — เบราว์เซอร์ถ่ายภาพหน้าเดิมแล้วค่อย ๆ กลายเป็นหน้าใหม่
    *  flushSync บังคับให้ DOM อัปเดตเสร็จภายในคอลแบ็ก ไม่งั้นภาพจะไม่ตรง
    *  เบราว์เซอร์ที่ไม่รองรับจะเปลี่ยนหน้าตามปกติ */
-  const navigate = useCallback((next: string) => {
-    const go = () => setTab(next as Tab)
-    if (next === tabRef.current) return
+  const navigate = useCallback((next: string, p?: Preset) => {
+    const go = () => { setPreset(p); setTab(next as Tab) }
+    if (next === tabRef.current && !p) return
     const doc = document as VTDoc
     if (!doc.startViewTransition || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       go(); return
@@ -89,6 +95,7 @@ export default function App() {
     {
       label: 'ตรวจสอบ',
       items: [
+        { id: 'shortage', label: 'ของขาด' },
         { id: 'receiving', label: 'ยังไม่ได้ทำรับ' },
         { id: 'depot', label: 'สั่งเข้าคลัง' },
       ],
@@ -145,6 +152,7 @@ export default function App() {
           {tab === 'run' && <Run snapshotDate={snapshotDate} />}
           {tab === 'transfer' && <Transfers snapshotDate={snapshotDate} />}
           {tab === 'transferB' && <TransfersB snapshotDate={snapshotDate} />}
+          {tab === 'shortage' && <Shortage preset={preset} />}
           {tab === 'receiving' && <Receiving />}
           {tab === 'depot' && <Depot />}
           {tab === 'kpi' && <KpiPage />}
