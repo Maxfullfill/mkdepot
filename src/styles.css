@@ -74,10 +74,13 @@ body {
   max-width: 1560px; margin: 0 auto; min-height: calc(100vh - 40px);
   background: var(--card); border-radius: 26px;
   box-shadow: var(--sh-3);
-  display: flex; flex-direction: column; overflow: hidden;
+  display: flex; flex-direction: column;
 }
 
-.topbar { background: var(--card); border-bottom: 1px solid var(--rule); }
+.topbar {
+  background: var(--card); border-bottom: 1px solid var(--rule);
+  position: relative; z-index: 100;
+}
 .bar {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -105,7 +108,7 @@ body {
   display: flex; align-items: center; gap: 2px;
   background: var(--dark); border-radius: var(--pill);
   padding: 5px; justify-self: center;
-  overflow-x: auto; scrollbar-width: none; max-width: 100%;
+  flex-wrap: wrap; max-width: 100%;
 }
 .topnav::-webkit-scrollbar { display: none; }
 .navcell { display: flex; align-items: center; }
@@ -551,9 +554,9 @@ td.num input { width: 74px; text-align: right; font-family: var(--mono); padding
 
 /* ── เมนูย่อย ────────────────────────────────────────────────────── */
 
-.navmore { position: relative; }
+.navmore { position: relative; z-index: 90; }
 .navmenu {
-  position: absolute; z-index: 70; top: calc(100% + 10px); right: 0;
+  position: absolute; z-index: 200; top: calc(100% + 12px); right: 0;
   min-width: 210px; padding: 7px;
   background: var(--card); border: 1px solid var(--rule);
   border-radius: 16px; box-shadow: var(--sh-3);
