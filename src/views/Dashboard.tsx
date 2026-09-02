@@ -168,36 +168,119 @@ export default function Dashboard({ go }: {
 
   return (
     <>
-      <h2>ภาพรวม</h2>
-      <p className="lede">
-        ข้อมูล ณ {d.snapshot_date} · {k.stations} สาขา ·
-        Class A {Number(k.lines ?? 0).toLocaleString()} บรรทัด
-      </p>
+      <div className="page-head">
+        <div className="ph-left">
+          <button className="iconbtn round" title="ไปหน้าคำนวณ"
+            onClick={() => go('run')}>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none">
+              <path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor"
+                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <div>
+            <h2>ภาพรวม</h2>
+            <p className="lede" style={{ margin: 0 }}>
+              ข้อมูล ณ {d.snapshot_date} · {k.stations} สาขา ·
+              Class A {Number(k.lines ?? 0).toLocaleString()} บรรทัด
+            </p>
+          </div>
+        </div>
+        <div className="ph-right">
+          <button className="btn ghost" onClick={() => go('kpi')}>ดู KPI ย้อนหลัง</button>
+          <button className="btn" onClick={() => go('run')}>คำนวณยอดเติม</button>
+        </div>
+      </div>
 
       <dl className="stats">
         <div className="stat">
-          <dt>Availability · เป้า 97%</dt>
+          <dt>
+            Availability
+            <span className="ico ok">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none">
+                <path d="M20 6 9 17l-5-5" stroke="currentColor" strokeWidth="2.4"
+                  strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </span>
+          </dt>
           <dd style={{ color: k.avail >= 97 ? 'var(--ok)' : 'var(--alarm)' }}>
-            {k.avail ?? '—'}<small>%</small>{delta(dAvail, true)}
+            {k.avail ?? '—'}<small>%</small>
           </dd>
+          <div className="stat-foot">
+            {delta(dAvail, true) ?? <span className="flat">เท่าเดิม</span>}
+            <span className="target">เป้า 97%</span>
+          </div>
+          <div className="bar-mini">
+            <i style={{ width: `${Math.min(100, k.avail ?? 0)}%`,
+              background: k.avail >= 97 ? 'var(--ok)' : 'var(--alarm)' }} />
+            <b style={{ left: '97%' }} />
+          </div>
         </div>
+
         <div className="stat">
-          <dt>DOH · เป้า {target} วัน</dt>
+          <dt>
+            DOH
+            <span className="ico oil">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none">
+                <circle cx="12" cy="12" r="8.5" stroke="currentColor" strokeWidth="1.9" />
+                <path d="M12 7.5V12l3 2" stroke="currentColor" strokeWidth="1.9"
+                  strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </span>
+          </dt>
           <dd style={{ color: k.doh <= target ? 'var(--ok)' : 'var(--oil)' }}>
-            {k.doh ?? '—'}{delta(dDoh, false)}
+            {k.doh ?? '—'}<small> วัน</small>
           </dd>
+          <div className="stat-foot">
+            {delta(dDoh, false) ?? <span className="flat">เท่าเดิม</span>}
+            <span className="target">เป้า {target} วัน</span>
+          </div>
+          <div className="bar-mini">
+            <i style={{ width: `${Math.min(100, ((k.doh ?? 0) / (target * 2)) * 100)}%`,
+              background: k.doh <= target ? 'var(--ok)' : 'var(--oil)' }} />
+            <b style={{ left: '50%' }} />
+          </div>
         </div>
+
         <div className="stat" style={{ cursor: 'pointer' }}
           onClick={() => go('shortage', { kind: 'Class A' })}
           title="ดูรายละเอียดของขาด">
-          <dt>ของขาดตอนนี้ →</dt>
+          <dt>
+            ของขาดตอนนี้
+            <span className="ico alarm">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none">
+                <path d="M12 8v5m0 3.5h.01M10.3 3.9 2.6 17.1A1.6 1.6 0 0 0 4 19.5h16a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z"
+                  stroke="currentColor" strokeWidth="1.9"
+                  strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </span>
+          </dt>
           <dd style={{ color: k.short ? 'var(--alarm)' : 'var(--ok)' }}>{k.short}</dd>
+          <div className="stat-foot">
+            <span className="target">จาก {Number(k.lines ?? 0).toLocaleString()} บรรทัด</span>
+            <span className="go">ดูรายละเอียด →</span>
+          </div>
         </div>
+
         <div className="stat">
-          <dt>ของเกินเพดาน</dt>
+          <dt>
+            ของเกินเพดาน
+            <span className="ico blue">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none">
+                <path d="M3 17.5 9 11l4 4 8-8.5" stroke="currentColor" strokeWidth="2"
+                  strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M15 6.5h6v6" stroke="currentColor" strokeWidth="2"
+                  strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </span>
+          </dt>
           <dd style={{ color: 'var(--oil)' }}>
-            {Number(k.excess_l ?? 0).toLocaleString()}<small> ลิตร</small>
+            {Number(k.excess_l ?? 0).toLocaleString()}<small> ล.</small>
           </dd>
+          <div className="stat-foot">
+            <span className="target">เกินเพดาน {target} วัน</span>
+            <span className="go" onClick={(e) => { e.stopPropagation(); go('transfer') }}
+              style={{ cursor: 'pointer' }}>โอนเกลี่ย →</span>
+          </div>
         </div>
       </dl>
 
@@ -366,8 +449,8 @@ export default function Dashboard({ go }: {
       })()}
 
       {todo.length > 0 && (
-        <div className="card">
-          <h3>ต้องจัดการ</h3>
+        <div className="card panel-dark">
+          <h3>ต้องจัดการวันนี้</h3>
           <p className="hint">กดที่รายการเพื่อไปหน้าที่เกี่ยวข้อง</p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {todo.map((t, i) => (
