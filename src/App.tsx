@@ -113,13 +113,24 @@ export default function App() {
   const flat = groups.flatMap((g, gi) =>
     g.items.map((it, ii) => ({ ...it, group: gi, first: ii === 0 })))
 
+  const initial = (me.username || '?').trim().charAt(0).toUpperCase()
+
   return (
     <div className="app">
       <header className="topbar">
         <div className="bar">
           <div className="brand">
-            <h1>ระบบเติมสินค้า</h1>
-            <p>คลังแม่กลอง</p>
+            <span className="logo" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none">
+                <path d="M4 17V9m0 0 8-5 8 5m-16 0 8 5 8-5m0 0v8m-8 5v-8"
+                  stroke="currentColor" strokeWidth="2"
+                  strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </span>
+            <span className="brand-txt">
+              <h1>เติมสินค้า</h1>
+              <p>คลังแม่กลอง</p>
+            </span>
           </div>
 
           <nav className="topnav">
@@ -135,11 +146,39 @@ export default function App() {
           </nav>
 
           <div className="who">
-            <span>
-              {me.username}
-              {me.role === 'admin' && <span className="tag" style={{ marginLeft: 7 }}>ผู้ดูแล</span>}
+            <button className="iconbtn" title="นำเข้าข้อมูล"
+              onClick={() => navigate('import')}>
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none">
+                <path d="M12 16V4m0 0L8 8m4-4 4 4M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2"
+                  stroke="currentColor" strokeWidth="1.8"
+                  strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+            <button className="iconbtn" title="ตั้งค่าการคำนวณ"
+              onClick={() => navigate('settings')}>
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none">
+                <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.8" />
+                <path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 7.9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 3 14.1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 7.9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V2a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H22a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1Z"
+                  stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"
+                  strokeLinejoin="round" opacity=".9" />
+              </svg>
+            </button>
+
+            <span className="userchip">
+              <span className="avatar">{initial}</span>
+              <span className="uname">
+                {me.username}
+                {me.role === 'admin' && <em>ผู้ดูแล</em>}
+              </span>
+              <button className="iconbtn sm" title="ออกจากระบบ"
+                onClick={() => supabase.auth.signOut()}>
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none">
+                  <path d="M15 17l5-5-5-5M20 12H9M12 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h6"
+                    stroke="currentColor" strokeWidth="1.8"
+                    strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
             </span>
-            <button onClick={() => supabase.auth.signOut()}>ออก</button>
           </div>
         </div>
       </header>
