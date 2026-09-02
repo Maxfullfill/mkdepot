@@ -79,9 +79,16 @@ body {
 
 .topbar { background: var(--card); border-bottom: 1px solid var(--rule); }
 .bar {
-  display: grid; grid-template-columns: auto 1fr auto;
-  align-items: center; gap: 26px; padding: 16px 26px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas:
+    'brand who'
+    'nav   nav';
+  align-items: center; gap: 14px 26px; padding: 16px 26px;
 }
+.brand  { grid-area: brand; }
+.who    { grid-area: who; justify-self: end; }
+.topnav { grid-area: nav; }
 
 /* โลโก้ */
 .brand { display: flex; align-items: center; gap: 11px; }
@@ -494,6 +501,30 @@ td.num input { width: 74px; text-align: right; font-family: var(--mono); padding
 .iconbtn.sm { width: 30px; height: 30px; border: 0; background: transparent; }
 .iconbtn.sm:hover { background: var(--red-w); color: var(--red); }
 .iconbtn.round { width: 44px; height: 44px; }
+
+/* ── เมนูย่อย ────────────────────────────────────────────────────── */
+
+.navmore { position: relative; }
+.navmenu {
+  position: absolute; z-index: 70; top: calc(100% + 10px); right: 0;
+  min-width: 210px; padding: 7px;
+  background: var(--card); border: 1px solid var(--rule);
+  border-radius: 16px; box-shadow: var(--sh-3);
+  display: flex; flex-direction: column; gap: 2px;
+  animation: menuIn .16s cubic-bezier(.2,.85,.25,1) both;
+}
+@keyframes menuIn { from { opacity: 0; transform: translateY(-6px); } }
+.navmenu button {
+  display: block; width: 100%; text-align: left;
+  padding: 10px 14px; border: 0; border-radius: 10px;
+  background: none; cursor: pointer;
+  font-family: var(--sans); font-size: 14.5px; color: var(--ink-2);
+  transition: background .14s, color .14s;
+}
+.navmenu button:hover { background: var(--wash); color: var(--ink); }
+.navmenu button[aria-current='true'] {
+  background: var(--brand-l); color: var(--brand-d); font-weight: 600;
+}
 
 /* ── ชิปผู้ใช้ ────────────────────────────────────────────────────── */
 
