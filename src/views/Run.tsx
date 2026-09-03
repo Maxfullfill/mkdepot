@@ -67,8 +67,11 @@ interface RunInfo {
 }
 
 /** เกณฑ์ CoverDay ที่เลือกได้ในแต่ละรอบ */
-type SortKey = 'none' | 'branch_name' | 'item_desc' | 'on_hand_pcs' | 'in_transit_pcs'
+/** คอลัมน์ที่เรียงได้จริง — ต้องเป็นชื่อฟิลด์ใน Line เท่านั้น */
+type SortField = 'branch_name' | 'item_desc' | 'on_hand_pcs' | 'in_transit_pcs'
   | 'sales_per_day' | 'cover_day' | 'doh_before' | 'suggested_pcs' | 'final_pcs' | 'doh_after'
+/** 'none' = ใช้ลำดับเดิมของระบบ (เรียงตามความสำคัญ) */
+type SortKey = SortField | 'none'
 
 const COVER_OPTS = [
   { v: 'early', label: 'ต้นเดือน',              hint: 'ใช้ตัวเลขต้นเดือนจากหน้าตั้งค่า' },
@@ -382,7 +385,8 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
       else { setSortKey('none'); setSortDir('desc') }   // กดครั้งที่สามกลับเป็นลำดับเดิม
     } else {
       setSortKey(k)
-      setSortDir(typeof mainLines[0]?.[k] === 'number' ? 'desc' : 'asc')
+      const sample = k === 'none' ? undefined : mainLines[0]?.[k]
+      setSortDir(typeof sample === 'number' ? 'desc' : 'asc')
     }
   }
 
@@ -395,9 +399,10 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
         .toLowerCase().includes(t))
 
     if (sortKey === 'none') return rows
+    const key: SortField = sortKey
     const dir = sortDir === 'asc' ? 1 : -1
     return [...rows].sort((a, b) => {
-      const x = a[sortKey], y = b[sortKey]
+      const x = a[key], y = b[key]
       if (x === null || x === undefined) return 1
       if (y === null || y === undefined) return -1
       if (typeof x === 'number' && typeof y === 'number') return (x - y) * dir
