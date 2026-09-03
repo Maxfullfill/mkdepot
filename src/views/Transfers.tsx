@@ -164,6 +164,39 @@ export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
     }, {}),
   }), [active])
 
+  /** ของระหว่างโอน — ติ๊กไว้ออกเฉพาะที่ติ๊ก ไม่ติ๊กออกทั้งหมด */
+  function exportPending() {
+    const rows = picked.size > 0
+      ? pending.filter((l) => picked.has(l.id))
+      : pending
+    if (!rows.length) return
+    const ws = XLSX.utils.json_to_sheet(rows.map((l) => ({
+      'สินค้า': l.item_name,
+      'รหัสสินค้า': l.mat_code,
+      'สาขาต้นทาง': l.from_name,
+      'รหัสต้นทาง': l.from_plant,
+      'สาขาปลายทาง': l.to_name,
+      'รหัสปลายทาง': l.to_plant,
+      'จำนวน': l.qty,
+      'หน่วย': l.uom,
+      'ชั้นที่จับคู่': l.match_level,
+      'ผจก.เขต': l.area,
+      'วันที่ยืนยัน': l.confirmed_at ? l.confirmed_at.slice(0, 10) : '',
+      'ค้างมา(วัน)': l.days_pending ?? '',
+      'สถานะ': l.status,
+    })))
+    // ตั้งความกว้างคอลัมน์ให้อ่านง่ายเวลาเปิดใน Excel
+    ws['!cols'] = [
+      { wch: 34 }, { wch: 12 }, { wch: 30 }, { wch: 11 },
+      { wch: 30 }, { wch: 11 }, { wch: 8 }, { wch: 7 },
+      { wch: 12 }, { wch: 20 }, { wch: 12 }, { wch: 11 }, { wch: 9 },
+    ]
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'ของระหว่างโอน')
+    XLSX.writeFile(wb,
+      `ของระหว่างโอน_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}.xlsx`)
+  }
+
   function exportTransfers() {
     if (!active.length) return
     const ws = XLSX.utils.json_to_sheet(active.map((l) => ({
@@ -275,11 +308,16 @@ export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
                 จึงไม่เสนอโอนซ้ำ · ติ๊กแล้วกดรับของเมื่อของถึงปลายทาง
               </p>
             </div>
-            {picked.size > 0 && (
-              <button className="btn" onClick={receivePicked}>
-                รับของ {picked.size} รายการ
+            <div className="row" style={{ gap: 8 }}>
+              <button className="btn ghost" onClick={exportPending}>
+                ดาวน์โหลด{picked.size > 0 ? ` ${picked.size} รายการ` : 'ทั้งหมด'}
               </button>
-            )}
+              {picked.size > 0 && (
+                <button className="btn" onClick={receivePicked}>
+                  รับของ {picked.size} รายการ
+                </button>
+              )}
+            </div>
           </div>
           <div className="tw" style={{ maxHeight: '34vh', marginTop: 14 }}>
             <table>
