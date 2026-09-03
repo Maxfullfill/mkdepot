@@ -8,6 +8,7 @@ import ImportPage from './views/Import'
 import Run from './views/Run'
 import Transfers from './views/Transfers'
 import TransfersB from './views/TransfersB'
+import ManualTransfer from './views/ManualTransfer'
 import Depot from './views/Depot'
 import Receiving from './views/Receiving'
 import Shortage from './views/Shortage'
@@ -20,7 +21,7 @@ const today = () => new Date().toISOString().slice(0, 10)
 type VTDoc = Document & {
   startViewTransition?: (cb: () => void) => { finished: Promise<void> }
 }
-type Tab = 'home' | 'import' | 'run' | 'transfer' | 'transferB' | 'receiving'
+type Tab = 'home' | 'import' | 'run' | 'transfer' | 'transferB' | 'manual' | 'receiving'
   | 'shortage' | 'depot' | 'kpi' | 'settings' | 'users'
 
 /** ตัวกรองที่ส่งข้ามหน้าได้ เช่นกดตัวเลขในหน้าภาพรวมแล้วเด้งไปหน้าของขาด */
@@ -91,6 +92,7 @@ export default function App() {
         { id: 'run', step: '2', label: 'คำนวณยอดเติม' },
         { id: 'transfer', step: '3', label: 'โอนเกลี่ยสินค้า' },
         { id: 'transferB', step: '4', label: 'โอนข้ามคลาส' },
+        { id: 'manual', label: 'โอนกำหนดเอง' },
       ],
     },
     {
@@ -191,6 +193,7 @@ export default function App() {
           {tab === 'run' && <Run snapshotDate={snapshotDate} />}
           {tab === 'transfer' && <Transfers snapshotDate={snapshotDate} />}
           {tab === 'transferB' && <TransfersB snapshotDate={snapshotDate} />}
+          {tab === 'manual' && <ManualTransfer />}
           {tab === 'shortage' && <Shortage preset={preset} />}
           {tab === 'receiving' && <Receiving />}
           {tab === 'depot' && <Depot />}
