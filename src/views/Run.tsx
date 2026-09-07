@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
-import { Picker, type Option } from './ui'
+import { Picker, type Option, StepNum } from './ui'
 
 interface Line {
   id: number; plant_code: string; mat_code: string
@@ -63,6 +63,7 @@ interface RunInfo {
   exported?: boolean; lines?: number; stale?: boolean; reasons?: string[]
   early_mode?: boolean | null; suggest_early?: boolean
   cover_opt?: string | null; used_depot?: boolean | null
+  custom_rop?: number | null; custom_lead?: number | null; custom_ss?: number | null
   suggest_cover?: string; has_depot?: boolean
 }
 
@@ -81,6 +82,7 @@ const COVER_OPTS = [
   { v: 'p75',   label: 'P75 — เผื่อพอประมาณ',    hint: 'สามในสี่ของรอบรถสั้นกว่านี้' },
   { v: 'p90',   label: 'P90 — เผื่อรอบยาว',      hint: 'เก้าในสิบของรอบรถสั้นกว่านี้' },
   { v: 'p95',   label: 'P95 — เผื่อเกือบทุกกรณี', hint: 'แทบไม่ขาดแต่ของกองเยอะ' },
+  { v: 'custom', label: 'กำหนดเอง', hint: 'กรอกจำนวนวันที่เผื่อ LeadTime และ Safety stock เอง' },
 ]
 
 interface Incoming { source: string; lines: number; qty: number; stations: number }
@@ -145,6 +147,9 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
   const [info, setInfo] = useState<RunInfo | null>(null)
   const [coverOpt, setCoverOpt] = useState('early')
   const [useDepot, setUseDepot] = useState(true)
+  const [cRop, setCRop] = useState<number | null>(10)
+  const [cLead, setCLead] = useState<number | null>(3)
+  const [cSs, setCSs] = useState<number | null>(1)
   const [cov, setCov] = useState({ early: 20, late: 7, lead: 3, split: 21, fixed: 10.1 })
   const [ss, setSs] = useState({ a: 1, boost: 1 })
   const [showRem, setShowRem] = useState(false)
@@ -232,6 +237,9 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
       setCoverOpt(r.cover_opt && r.cover_opt !== 'auto'
         ? r.cover_opt : (r.suggest_cover ?? 'early'))
       setUseDepot(r.used_depot ?? r.has_depot ?? true)
+      if (r.custom_rop != null) setCRop(Number(r.custom_rop))
+      if (r.custom_lead != null) setCLead(Number(r.custom_lead))
+      if (r.custom_ss != null) setCSs(Number(r.custom_ss))
       if (!r.found || !r.run_id) return
       setRunId(r.run_id)
       const n = await load(r.run_id)
@@ -262,6 +270,9 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
         p_created_by: (await supabase.auth.getUser()).data.user?.id ?? null,
         p_cover: coverOpt,
         p_use_depot: useDepot,
+        p_rop: coverOpt === 'custom' ? cRop : null,
+        p_lead: coverOpt === 'custom' ? cLead : null,
+        p_ss: coverOpt === 'custom' ? cSs : null,
       })
       if (error) throw new Error(error.message)
       setRunId(data as string)
@@ -567,25 +578,53 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
           </button>
         </div>
 
+        {coverOpt === 'custom' && (
+          <div className="card" style={{ margin: '12px 0 0', padding: '16px 18px' }}>
+            <div className="row" style={{ gap: 22 }}>
+              <span style={{ display: 'flex', gap: 9, alignItems: 'center' }}>
+                <label style={{ minWidth: 108 }}>จำนวนวันที่เผื่อ</label>
+                <StepNum value={cRop} step={1} min={1} max={90} onChange={setCRop} />
+                <span style={{ fontSize: 12.5, color: 'var(--ink-3)' }}>วัน (ROP)</span>
+              </span>
+              <span style={{ display: 'flex', gap: 9, alignItems: 'center' }}>
+                <label>LeadTime</label>
+                <StepNum value={cLead} step={1} min={0} max={30} onChange={setCLead} />
+                <span style={{ fontSize: 12.5, color: 'var(--ink-3)' }}>วัน</span>
+              </span>
+              <span style={{ display: 'flex', gap: 9, alignItems: 'center' }}>
+                <label>Safety stock</label>
+                <StepNum value={cSs} step={1} min={0} max={20} onChange={setCSs} />
+                <span style={{ fontSize: 12.5, color: 'var(--ink-3)' }}>ชิ้น/บรรทัด</span>
+              </span>
+            </div>
+            <p className="hint" style={{ margin: '12px 0 0' }}>
+              ค่าที่กรอกใช้เฉพาะรอบนี้ ไม่กระทบค่าตั้งค่ากลาง และถูกบันทึกไว้ให้ย้อนดูได้
+            </p>
+          </div>
+        )}
+
         {/* อธิบายให้ชัดว่ารอบนี้คิดยังไง ใช้กี่วัน SS กี่ชิ้น */}
         <div className="note" style={{ marginTop: 12 }}>
           {(() => {
             const o = COVER_OPTS.find((x) => x.v === coverOpt)!
-            const fixed = coverOpt === 'early' ? cov.early
+            const fixed = coverOpt === 'custom' ? (cRop ?? 0)
+              : coverOpt === 'early' ? cov.early
               : coverOpt === 'late' ? cov.late
               : coverOpt === 'fixed' ? cov.fixed : null
+            const lead = coverOpt === 'custom' ? (cLead ?? 0) : cov.lead
+            const ssA = coverOpt === 'custom' ? (cSs ?? 0) : ss.a
             return (
               <>
                 <strong>วิธีคิดรอบนี้</strong>{' — '}
                 {fixed !== null ? (
-                  <>เติมให้พอขาย <strong>{fixed + cov.lead} วัน</strong>{' '}
-                    (CoverDay {fixed} + LeadTime {cov.lead})</>
+                  <>เติมให้พอขาย <strong>{fixed + lead} วัน</strong>{' '}
+                    (ROP {fixed} + LeadTime {lead})</>
                 ) : (
                   <>CoverDay ต่างกันรายสาขาตาม {o.label} แล้วบวก LeadTime {cov.lead} วัน
                     {' — '}{o.hint}</>
                 )}
-                {' · '}บวก Safety stock <strong>{ss.a} ชิ้น</strong> ต่อบรรทัด
-                {' (หัวเชื้อ ' + ss.boost + ' ชิ้น)'}
+                {' · '}บวก Safety stock <strong>{ssA} ชิ้น</strong> ต่อบรรทัด
+                {coverOpt === 'custom' ? ' (ใช้ค่าเดียวกันทุกคลาส)' : ` (หัวเชื้อ ${ss.boost} ชิ้น)`}
                 {' · '}หักของบนชั้นและของระหว่างทางออก
                 {' · '}
                 <strong style={{ color: useDepot ? 'var(--ok)' : 'var(--oil)' }}>
@@ -640,6 +679,8 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
                 {info.cover_opt && info.cover_opt !== 'auto' &&
                   ` · เกณฑ์${COVER_OPTS.find((x) => x.v === info.cover_opt)?.label ?? info.cover_opt}`}
                 {info.used_depot === false && ' · ไม่จำกัดตามคลัง'}
+                {info.cover_opt === 'custom' && info.custom_rop != null &&
+                  ` · ROP ${info.custom_rop} + LT ${info.custom_lead} + SS ${info.custom_ss}`}
                 {info.exported ? ' · ออกไฟล์แล้ว' : ' · ยังไม่ได้ออกไฟล์'}
                 {' · ข้อมูลยังไม่เปลี่ยน ไม่ต้องคำนวณใหม่'}
               </>
