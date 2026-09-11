@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from './lib/supabase'
@@ -165,101 +165,103 @@ export default function App() {
     },
   ]
 
-  /** งานประจำวันเป็นลำดับขั้น แสดงเป็นวงกลมตัวเลข ตัวที่เปิดอยู่กางชื่อออกมา
-   *  ที่เหลือรวมไว้ในเมนูรายงาน จะได้ไม่ล้นแถบ */
-  /** แสดงทุกเมนูในแถวเดียว คั่นกลุ่มด้วยเส้นบาง */
-  const navItems = groups.flatMap((g, gi) =>
-    g.items.map((it, ii) => ({ ...it, newGroup: ii === 0 && gi > 0 })))
   const initial = (me.username || '?').trim().charAt(0).toUpperCase()
 
+  /** ไอคอนของแต่ละเมนู ใช้เส้นบางให้เข้ากับสไตล์โดยรวม */
+  const ICON: Record<string, ReactNode> = {
+    home: <path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z" />,
+    daily: <><rect x="4" y="4" width="7" height="7" rx="2" /><rect x="13" y="4" width="7" height="7" rx="2" /><rect x="4" y="13" width="7" height="7" rx="2" /><rect x="13" y="13" width="7" height="7" rx="2" /></>,
+    import: <path d="M12 15V4m0 0L8.5 7.5M12 4l3.5 3.5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" />,
+    run: <><rect x="4.5" y="3" width="15" height="18" rx="2.5" /><path d="M8.5 8h7M8.5 12h3M8.5 16h3M15 12v4" /></>,
+    transfer: <path d="M7 7h11l-3-3m3 13H7l3 3" />,
+    transferB: <path d="M4 8.5 12 4l8 4.5v7L12 20l-8-4.5z M4 8.5 12 13l8-4.5M12 13v7" />,
+    manual: <path d="M12 5v14M5 12h14" />,
+    shortage: <path d="M12 8v5m0 3.5h.01M10.3 3.9 2.6 17.1A1.6 1.6 0 0 0 4 19.5h16a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0Z" />,
+    receiving: <><path d="M3 7h10v9H3zM13 10h4l3 3v3h-7z" /><circle cx="7" cy="18" r="1.6" /><circle cx="17" cy="18" r="1.6" /></>,
+    depot: <path d="M4 8.5 12 4l8 4.5v7L12 20l-8-4.5z M4 8.5 12 13l8-4.5M12 13v7" />,
+    kpi: <path d="M4 19V5m0 14h16M8 16v-5m4 5V7m4 9v-3" />,
+    groups: <><circle cx="8" cy="9" r="3" /><circle cx="17" cy="7.5" r="2.2" /><path d="M3 19c0-2.8 2.2-5 5-5s5 2.2 5 5M15 19c0-2 .8-3.6 2-4.4" /></>,
+    settings: <><circle cx="12" cy="12" r="3.2" /><path d="M12 2.5v2M12 19.5v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2.5 12h2M19.5 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" /></>,
+    users: <><circle cx="12" cy="8" r="3.4" /><path d="M5 20c0-3.6 3.1-6.5 7-6.5s7 2.9 7 6.5" /></>,
+  }
+
+  const Icon = ({ id }: { id: string }) => (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
+      stroke="currentColor" strokeWidth="1.7"
+      strokeLinecap="round" strokeLinejoin="round">
+      {ICON[id] ?? ICON.home}
+    </svg>
+  )
+
+  const simpleNav: Item[] = [
+    { id: 'daily', label: 'งานประจำวัน' },
+    { id: 'home', label: 'ภาพรวม' },
+  ]
+
   return (
-    <div className="app">
-      <header className="topbar">
-        <div className="bar">
-          <div className="brand">
-            <span className="logo" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="17" height="17" fill="none">
-                <path d="M4 17V9m0 0 8-5 8 5m-16 0 8 5 8-5m0 0v8m-8 5v-8"
-                  stroke="currentColor" strokeWidth="2"
-                  strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </span>
-            <span className="brand-txt">
-              <b>เติมสินค้า</b>
-              <i>คลังแม่กลอง</i>
-            </span>
-          </div>
+    <div className="shell">
+      <aside className="rail">
+        <div className="rail-top">
+          <span className="logo" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none">
+              <path d="M4 17V9m0 0 8-5 8 5m-16 0 8 5 8-5m0 0v8m-8 5v-8"
+                stroke="currentColor" strokeWidth="2"
+                strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </span>
+          <span className="brand-txt">
+            <b>เติมสินค้า</b>
+            <i>คลังแม่กลอง</i>
+          </span>
+        </div>
 
-          {full ? (
-            <nav className="topnav">
-              {navItems.map((t) => (
-                <span key={t.id} className="navcell">
-                  {t.newGroup && <i className="sep" aria-hidden="true" />}
-                  <button aria-current={tab === t.id} onClick={() => navigate(t.id)}>
-                    {t.step && <span className="step">{t.step}</span>}
-                    {t.label}
-                  </button>
-                </span>
+        <nav className="nav">
+          {full ? groups.map((g, gi) => (
+            <div className="nav-group" key={gi}>
+              {g.label && <p className="nav-label">{g.label}</p>}
+              {g.items.map((t) => (
+                <button key={t.id} aria-current={tab === t.id}
+                  onClick={() => navigate(t.id)}>
+                  <Icon id={t.id} />
+                  <span>{t.label}</span>
+                  {t.step && <i className="step">{t.step}</i>}
+                </button>
               ))}
-            </nav>
-          ) : (
-            <nav className="topnav">
-              <button aria-current={tab === 'daily'} onClick={() => navigate('daily')}>
-                งานประจำวัน
-              </button>
-              <span className="navcell"><i className="sep" aria-hidden="true" /></span>
-              <button aria-current={tab === 'home'} onClick={() => navigate('home')}>
-                ภาพรวม
-              </button>
-            </nav>
+            </div>
+          )) : (
+            <div className="nav-group">
+              {simpleNav.map((t) => (
+                <button key={t.id} aria-current={tab === t.id}
+                  onClick={() => navigate(t.id)}>
+                  <Icon id={t.id} />
+                  <span>{t.label}</span>
+                </button>
+              ))}
+            </div>
           )}
+        </nav>
 
-          <div className="who">
-            {full ? (
-              <button className="btn ghost" style={{ padding: '7px 15px', fontSize: 13.5 }}
-                onClick={exitFull} title="กลับไปหน้างานประจำวัน">
-                ← โหมดง่าย
-              </button>
-            ) : (
-              <button className="btn ghost" style={{ padding: '7px 15px', fontSize: 13.5 }}
-                onClick={enterFull} title="เปิดเมนูทั้งหมด">
-                หลังบ้าน →
-              </button>
-            )}
-
-            {full && <button className="iconbtn" title="นำเข้าข้อมูล" onClick={() => navigate('import')}>
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none">
-                <path d="M12 16V4m0 0L8 8m4-4 4 4M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2"
+        <div className="rail-foot">
+          <button className="mode-btn" onClick={full ? exitFull : enterFull}>
+            {full ? 'โหมดง่าย' : 'หลังบ้าน'}
+          </button>
+          <div className="userchip" title={me.username}>
+            <span className="avatar">{initial}</span>
+            <span className="uname">
+              <b>{me.username}</b>
+              {me.role === 'admin' && <i>ผู้ดูแล</i>}
+            </span>
+            <button className="iconbtn sm" title="ออกจากระบบ"
+              onClick={() => supabase.auth.signOut()}>
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none">
+                <path d="M15 17l5-5-5-5M20 12H9M12 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h6"
                   stroke="currentColor" strokeWidth="1.9"
                   strokeLinecap="round" strokeLinejoin="round" />
               </svg>
-            </button>}
-            {full && <button className="iconbtn" title="ตั้งค่าการคำนวณ" onClick={() => navigate('settings')}>
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none">
-                <circle cx="12" cy="12" r="3.2" stroke="currentColor" strokeWidth="1.9" />
-                <path d="M12 2.5v2M12 19.5v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2.5 12h2M19.5 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"
-                  stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
-              </svg>
-            </button>}
-
-            <span className="userchip" title={me.username}>
-              <span className="avatar">{initial}</span>
-              <span className="uname">
-                <b>{me.username}</b>
-                {me.role === 'admin' && <i>ผู้ดูแล</i>}
-              </span>
-              <button className="iconbtn sm" title="ออกจากระบบ"
-                onClick={() => supabase.auth.signOut()}>
-                <svg viewBox="0 0 24 24" width="15" height="15" fill="none">
-                  <path d="M15 17l5-5-5-5M20 12H9M12 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h6"
-                    stroke="currentColor" strokeWidth="1.9"
-                    strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </button>
-            </span>
+            </button>
           </div>
         </div>
-      </header>
+      </aside>
 
       <main className="main">
         {/* key=tab ทำให้ React สร้างใหม่ แอนิเมชันจึงเล่นซ้ำ */}
