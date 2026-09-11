@@ -243,8 +243,11 @@ export default function Import({ snapshotDate, setSnapshotDate, compact }: {
       supabase.from('stations').select('plant_code'),
       supabase.from('station_alias').select('alias_code, plant_code'),
     ])
-    const have = new Set((known ?? []).map((r) => r.plant_code as string))
-    const map = new Map((alias ?? []).map((r) => [r.alias_code as string, r.plant_code as string]))
+    // ผ่าน unknown ก่อน เพราะชนิดที่ Supabase เดาให้ไม่ตรงกับที่ใช้จริง
+    const knownRows = (known ?? []) as unknown as { plant_code: string }[]
+    const aliasRows = (alias ?? []) as unknown as { alias_code: string; plant_code: string }[]
+    const have = new Set(knownRows.map((r) => r.plant_code))
+    const map = new Map(aliasRows.map((r) => [r.alias_code, r.plant_code]))
 
     const resolve = (code: string | null): string | null => {
       if (!code) return null
@@ -339,7 +342,7 @@ export default function Import({ snapshotDate, setSnapshotDate, compact }: {
       const { data: all } = await supabase.from(t.table).select(t.dateCol).limit(5000)
       const m = new Map<string, number>()
       ;(all ?? []).forEach((r) => {
-        const d = (r as Record<string, string>)[t.dateCol]
+        const d = (r as unknown as Record<string, string>)[t.dateCol]
         m.set(d, (m.get(d) ?? 0) + 1)
       })
       dates = [...m.entries()].map(([d, n]) => ({ d, n }))
@@ -349,17 +352,21 @@ export default function Import({ snapshotDate, setSnapshotDate, compact }: {
         const { data: p } = await supabase.from('delivery_plan')
           .select('plant_code, stations(branch_name)')
           .eq('trip_date', snapshotDate).limit(200)
-        sample = (p ?? []).map((r) => {
-          const st = r.stations as { branch_name: string } | null
-          return st?.branch_name ?? (r.plant_code as string)
-        }).sort()
+        const plans = (p ?? []) as unknown as {
+          plant_code: string
+          stations: { branch_name: string } | null
+        }[]
+        sample = plans.map((r) => r.stations?.branch_name ?? r.plant_code).sort()
       }
     } else {
       const { count } = await supabase.from(t.table).select('*', { count: 'exact', head: true })
       rows = count ?? 0
     }
 
-    setPeekData({ batches: (b ?? []) as never, rows, dates, sample })
+    const batches = (b ?? []) as unknown as {
+      snapshot_date: string; uploaded_at: string; row_count: number; filename: string
+    }[]
+    setPeekData({ batches, rows, dates, sample })
   }
 
   /** ล้างข้อมูลของวันที่เลือก แล้วอัปใหม่ได้สะอาด */
