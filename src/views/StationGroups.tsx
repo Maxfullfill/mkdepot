@@ -15,6 +15,10 @@ interface Preview {
   host_plant: string; host_name: string
   days_no_trip: number
 }
+interface Warn {
+  plant_code: string; host_plant: string
+  'สาขาที่ฝาก': string; 'จุดที่ฝาก': string; 'คำเตือน': string | null
+}
 
 export default function StationGroups() {
   const [rows, setRows] = useState<Row[]>([])
@@ -28,15 +32,18 @@ export default function StationGroups() {
   const [proxyOn, setProxyOn] = useState(true)
   const [tripDate, setTripDate] = useState(new Date().toISOString().slice(0, 10))
   const [preview, setPreview] = useState<Preview[]>([])
+  const [warn, setWarn] = useState<Warn[]>([])
 
   useEffect(() => { void init() }, [])
 
   async function init() {
     setBusy(true)
-    const [r, s] = await Promise.all([
+    const [r, s, w] = await Promise.all([
       supabase.from('v_proxy_list').select('*'),
       supabase.from('settings').select('value').eq('key', 'proxy_enabled').maybeSingle(),
+      supabase.from('v_proxy_warning').select('*'),
     ])
+    setWarn((w.data ?? []) as Warn[])
     if (r.error) setErr(r.error.message)
     setRows((r.data ?? []) as Row[])
     if (s.data) setProxyOn(Number(s.data.value) === 1)
@@ -46,8 +53,12 @@ export default function StationGroups() {
   const flash = (t: string) => { setMsg(t); setTimeout(() => setMsg(''), 2000) }
 
   async function reload() {
-    const { data } = await supabase.from('v_proxy_list').select('*')
-    setRows((data ?? []) as Row[])
+    const [r, w] = await Promise.all([
+      supabase.from('v_proxy_list').select('*'),
+      supabase.from('v_proxy_warning').select('*'),
+    ])
+    setRows((r.data ?? []) as Row[])
+    setWarn((w.data ?? []) as Warn[])
   }
 
   async function toggleProxy(v: boolean) {
@@ -125,6 +136,23 @@ export default function StationGroups() {
       </p>
 
       {err && <div className="note bad">{err}</div>}
+
+      {warn.length > 0 && (
+        <div className="note bad">
+          <strong>ตรวจพบการผูกซ้อนกัน {warn.length} จุด</strong>
+          <div style={{ marginTop: 6 }}>
+            {warn.slice(0, 5).map((w, i) => (
+              <div key={i}>
+                {w['สาขาที่ฝาก']} → {w['จุดที่ฝาก']} · {w['คำเตือน']}
+              </div>
+            ))}
+            {warn.length > 5 && <div>และอีก {warn.length - 5} จุด</div>}
+          </div>
+          <div style={{ marginTop: 8 }}>
+            ระบบยังคำนวณให้ได้โดยไม่ซ้ำ แต่ของอาจไปไม่ถึงถ้ารถไม่เข้าจุดปลายทางจริง
+          </div>
+        </div>
+      )}
 
       <dl className="stats">
         <div className="stat"><dt>สาขาทั้งหมด</dt><dd>{rows.length}</dd></div>
@@ -293,7 +321,9 @@ export default function StationGroups() {
 
       <div className="note">
         ตัวเลขหน้าป้ายคือลำดับความสะดวก กดลูกศรเลื่อนขึ้นได้ ·
-        ถ้ารอบนั้นรถเข้าหลายจุดพร้อมกัน ระบบเลือกจุดที่ลำดับดีที่สุด ·
+        สาขาหนึ่งฝากได้หลายจุด และจุดหนึ่งรับฝากให้หลายสาขาได้ ·
+        ถ้ารอบนั้นรถเข้าหลายจุดพร้อมกัน ระบบเลือกจุดที่ลำดับดีที่สุดเพียงจุดเดียว
+        ไม่คำนวณซ้ำ · ถ้ารถเข้าสาขานั้นโดยตรงอยู่แล้ว จะไม่ใช้การฝากเลย ·
         บรรทัดที่เกิดจากการฝากมีป้าย <strong>ฝากที่ …</strong> ในหน้าคำนวณ
       </div>
 
