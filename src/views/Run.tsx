@@ -7,6 +7,7 @@ interface Line {
   id: number; plant_code: string; mat_code: string
   sales_per_day: number; cover_day: number; safety_stock: number
   on_hand_pcs: number; in_transit_pcs: number
+  via_plant?: string | null; via_name?: string | null
   suggested_pcs: number; manual_add: number; final_pcs: number
   uom: string | null; doh_before: number | null; doh_after: number | null
   priority: number; flag: string | null
@@ -316,11 +317,14 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
       .eq('run_id', id)
       .order('priority').order('plant_code')
     if (error) { setErr(error.message); return 0 }
+    // แปลงรหัสสาขาที่ฝากเป็นชื่อ ใช้ทะเบียนสาขาชุดเดียวกับช่องค้นหา
+    const nameOf = new Map(stOpts.map((o) => [o.value, o.label]))
     const rows = (data ?? []).map((r: Record<string, unknown>) => {
       const it = r.items as {
         desc_en: string; template_descr: string | null
         exclude_from_template: boolean; is_booster: boolean; units_per_case: number
       } | null
+      const via = (r.via_plant as string | null) ?? null
       return {
         ...(r as unknown as Line),
         branch_name: (r.stations as { branch_name: string } | null)?.branch_name,
@@ -328,6 +332,7 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
         off_template: it?.exclude_from_template ?? false,
         is_booster: it?.is_booster ?? false,
         units_per_case: it?.units_per_case ?? 1,
+        via_name: via ? (nameOf.get(via) ?? via) : null,
       }
     })
     setLines(rows)
@@ -535,6 +540,7 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
       'สินค้า': r.item_descr,
       'คงเหลือ': r.on_hand_pcs,
       'ระหว่างทาง': r.in_transit_pcs,
+      'ฝากไว้ที่': r.via_name ?? r.via_plant ?? '',
       'จำนวนที่ต้องสั่ง': r.qty,
       'หน่วย': r.uom,
     })))
