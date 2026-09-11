@@ -2,12 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { Picker, type Option } from './ui'
 
+interface Station { plant_code: string; branch_name: string }
 interface Member { plant_code: string; branch_name: string; province: string }
 interface Group {
   group_id: string; name: string
   host_plant: string | null; host_name: string | null
-  note: string | null; is_active: boolean
-  member_count: number; members: Member[]
+  is_active: boolean; member_count: number; members: Member[]
 }
 interface Preview {
   plant_code: string; branch_name: string
@@ -16,48 +16,66 @@ interface Preview {
 }
 
 export default function StationGroups() {
+  const [stations, setStations] = useState<Station[]>([])
   const [groups, setGroups] = useState<Group[]>([])
-  const [stOpts, setStOpts] = useState<Option[]>([])
   const [busy, setBusy] = useState(true)
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
-  const [open, setOpen] = useState<string | null>(null)
-
-  const [nName, setNName] = useState('')
-  const [nHost, setNHost] = useState('')
-  const [nNote, setNNote] = useState('')
-
-  const [addTo, setAddTo] = useState<Record<string, string>>({})
+  const [q, setQ] = useState('')
+  const [only, setOnly] = useState<'all' | 'host'>('all')
+  const [adding, setAdding] = useState<string | null>(null)
+  const [pick, setPick] = useState('')
+  const [proxyOn, setProxyOn] = useState(true)
   const [tripDate, setTripDate] = useState(new Date().toISOString().slice(0, 10))
   const [preview, setPreview] = useState<Preview[]>([])
-  const [proxyOn, setProxyOn] = useState(true)
 
   useEffect(() => { void init() }, [])
 
   async function init() {
     setBusy(true)
-    const [g, st, s] = await Promise.all([
+    const [st, g, s] = await Promise.all([
+      supabase.from('stations').select('plant_code, branch_name').eq('is_active', true),
       supabase.from('v_station_groups').select('*'),
-      supabase.from('stations').select('plant_code, branch_name')
-        .eq('is_active', true).order('branch_name'),
       supabase.from('settings').select('value').eq('key', 'proxy_enabled').maybeSingle(),
     ])
-    if (g.error) setErr(g.error.message)
+    if (st.error) setErr(st.error.message)
+    setStations(((st.data ?? []) as Station[])
+      .sort((a, b) => a.plant_code.localeCompare(b.plant_code, 'th')))
     setGroups((g.data ?? []) as Group[])
-    setStOpts((st.data ?? []).map((r) => ({
-      value: r.plant_code as string,
-      label: (r.branch_name as string) || (r.plant_code as string),
-    })))
     if (s.data) setProxyOn(Number(s.data.value) === 1)
     setBusy(false)
   }
 
-  const flash = (t: string) => { setMsg(t); setTimeout(() => setMsg(''), 2200) }
+  const flash = (t: string) => { setMsg(t); setTimeout(() => setMsg(''), 2000) }
 
   async function reload() {
     const { data } = await supabase.from('v_station_groups').select('*')
     setGroups((data ?? []) as Group[])
   }
+
+  /** สาขานี้รับฝากให้ใครบ้าง */
+  const hostOf = useMemo(() => {
+    const m = new Map<string, { gid: string; members: Member[]; active: boolean }>()
+    groups.forEach((g) => {
+      if (g.host_plant) m.set(g.host_plant, {
+        gid: g.group_id, members: g.members, active: g.is_active,
+      })
+    })
+    return m
+  }, [groups])
+
+  /** สาขานี้ถูกฝากไว้ที่ใคร — ใช้กันไม่ให้ฝากซ้อนกันหลายชั้น */
+  const hostedBy = useMemo(() => {
+    const m = new Map<string, string>()
+    groups.forEach((g) => {
+      if (!g.host_plant) return
+      g.members.forEach((x) => m.set(x.plant_code, g.host_plant as string))
+    })
+    return m
+  }, [groups])
+
+  const nameOf = useMemo(
+    () => new Map(stations.map((s) => [s.plant_code, s.branch_name])), [stations])
 
   async function toggleProxy(v: boolean) {
     setProxyOn(v)
@@ -65,41 +83,56 @@ export default function StationGroups() {
     flash(v ? 'เปิดการฝากของแล้ว' : 'ปิดการฝากของแล้ว')
   }
 
-  async function createGroup() {
-    if (!nName.trim() || !nHost) return
-    const { error } = await supabase.from('station_groups').insert({
-      name: nName.trim(), host_plant: nHost, note: nNote.trim() || null,
-    })
-    if (error) { setErr(error.message); return }
-    setNName(''); setNHost(''); setNNote('')
-    await reload(); flash('สร้างกลุ่มแล้ว')
-  }
+  /** เพิ่มสาขาที่ฝากได้ — สร้างกลุ่มให้อัตโนมัติถ้ายังไม่มี */
+  async function addMember(host: string, member: string) {
+    setErr('')
+    if (host === member) { setErr('เลือกสาขาเดียวกับตัวเองไม่ได้'); return }
+    if (hostedBy.has(host)) {
+      setErr(`${nameOf.get(host)} ถูกฝากไว้ที่ ${nameOf.get(hostedBy.get(host) as string)} อยู่แล้ว จะเป็นจุดรับฝากไม่ได้`)
+      return
+    }
+    if (hostOf.has(member)) {
+      setErr(`${nameOf.get(member)} เป็นจุดรับฝากให้สาขาอื่นอยู่ ต้องเอาออกก่อน`)
+      return
+    }
+    if (hostedBy.has(member)) {
+      setErr(`${nameOf.get(member)} ถูกฝากไว้ที่ ${nameOf.get(hostedBy.get(member) as string)} อยู่แล้ว`)
+      return
+    }
 
-  async function addMember(gid: string) {
-    const plant = addTo[gid]
-    if (!plant) return
+    let gid = hostOf.get(host)?.gid
+    if (!gid) {
+      const { data, error } = await supabase.from('station_groups')
+        .insert({ name: nameOf.get(host) ?? host, host_plant: host })
+        .select('group_id').single()
+      if (error) { setErr(error.message); return }
+      gid = data.group_id as string
+    }
     const { error } = await supabase.from('station_group_members')
-      .insert({ group_id: gid, plant_code: plant })
+      .insert({ group_id: gid, plant_code: member })
     if (error) { setErr(error.message); return }
-    setAddTo((p) => ({ ...p, [gid]: '' }))
-    await reload(); flash('เพิ่มสาขาแล้ว')
+    setPick(''); setAdding(null)
+    await reload(); flash('เพิ่มแล้ว')
   }
 
-  async function removeMember(gid: string, plant: string) {
-    await supabase.from('station_group_members').delete()
-      .eq('group_id', gid).eq('plant_code', plant)
+  async function removeMember(host: string, member: string) {
+    const g = hostOf.get(host)
+    if (!g) return
+    await supabase.from('station_group_members')
+      .delete().eq('group_id', g.gid).eq('plant_code', member)
+    // ไม่เหลือสมาชิกแล้วลบกลุ่มทิ้ง ไม่ให้รกฐานข้อมูล
+    if (g.members.length <= 1) {
+      await supabase.from('station_groups').delete().eq('group_id', g.gid)
+    }
     await reload()
   }
 
-  async function setActive(gid: string, v: boolean) {
-    await supabase.from('station_groups').update({ is_active: v }).eq('group_id', gid)
+  async function toggleGroup(host: string) {
+    const g = hostOf.get(host)
+    if (!g) return
+    await supabase.from('station_groups')
+      .update({ is_active: !g.active }).eq('group_id', g.gid)
     await reload()
-  }
-
-  async function delGroup(gid: string, name: string) {
-    if (!confirm(`ลบกลุ่ม "${name}" ทั้งกลุ่ม สมาชิกทั้งหมดจะถูกลบด้วย`)) return
-    await supabase.from('station_groups').delete().eq('group_id', gid)
-    await reload(); flash('ลบกลุ่มแล้ว')
   }
 
   async function runPreview() {
@@ -108,15 +141,20 @@ export default function StationGroups() {
     setPreview((data ?? []) as Preview[])
   }
 
-  /** สาขาที่ยังไม่ได้อยู่กลุ่มไหนเลย ใช้เตือนว่ายังเหลืออีกเท่าไหร่ */
-  const assigned = useMemo(() => {
-    const s = new Set<string>()
-    groups.forEach((g) => {
-      g.members.forEach((m) => s.add(m.plant_code))
-      if (g.host_plant) s.add(g.host_plant)
+  const shown = useMemo(() => {
+    const t = q.trim().toLowerCase()
+    return stations.filter((s) => {
+      if (only === 'host' && !hostOf.has(s.plant_code)) return false
+      if (t && !`${s.plant_code} ${s.branch_name}`.toLowerCase().includes(t)) return false
+      return true
     })
-    return s
-  }, [groups])
+  }, [stations, q, only, hostOf])
+
+  const opts: Option[] = useMemo(
+    () => stations.map((s) => ({ value: s.plant_code, label: s.branch_name })), [stations])
+
+  const totalPairs = useMemo(
+    () => groups.reduce((n, g) => n + (g.is_active ? g.member_count : 0), 0), [groups])
 
   if (busy) return <><h2>กลุ่มสถานี</h2><div className="note">กำลังโหลด…</div></>
 
@@ -124,11 +162,29 @@ export default function StationGroups() {
     <>
       <h2>กลุ่มสถานี</h2>
       <p className="lede">
-        จัดกลุ่มสาขาเองได้ กำหนดสาขาทางผ่านเป็นหัวกลุ่ม ·
-        รอบไหนที่รถเข้าหัวกลุ่มแต่ไม่เข้าสมาชิก ระบบจะคำนวณให้สมาชิกด้วยและระบุว่าฝากไว้ที่ไหน
+        กดที่สาขาไหนก็ได้ แล้วเพิ่มสาขาที่ฝากของไว้ที่นั่นได้ ·
+        รอบไหนที่รถเข้าสาขาหลักแต่ไม่เข้าสาขาที่ฝาก ระบบจะคำนวณให้ด้วย
       </p>
 
       {err && <div className="note bad">{err}</div>}
+
+      <dl className="stats">
+        <div className="stat"><dt>สาขาทั้งหมด</dt><dd>{stations.length}</dd></div>
+        <div className="stat">
+          <dt>จุดรับฝาก</dt>
+          <dd style={{ color: 'var(--ok)' }}>{hostOf.size}</dd>
+        </div>
+        <div className="stat">
+          <dt>คู่ที่ฝากได้</dt>
+          <dd style={{ color: 'var(--oil)' }}>{totalPairs}</dd>
+        </div>
+        <div className="stat">
+          <dt>การฝากของ</dt>
+          <dd style={{ fontSize: 20, color: proxyOn ? 'var(--ok)' : 'var(--ink-3)' }}>
+            {proxyOn ? 'เปิดอยู่' : 'ปิดอยู่'}
+          </dd>
+        </div>
+      </dl>
 
       <div className="card">
         <div className="spread">
@@ -146,118 +202,103 @@ export default function StationGroups() {
         </div>
       </div>
 
-      <div className="card">
-        <h3>สร้างกลุ่มใหม่</h3>
-        <p className="hint">
-          หัวกลุ่มคือสาขาที่รถผ่านประจำ ใช้เป็นจุดฝากของให้สมาชิกในกลุ่ม
-        </p>
-        <div className="row">
-          <input type="text" placeholder="ชื่อกลุ่ม เช่น สายเพชรบุรี" value={nName}
-            onChange={(e) => setNName(e.target.value)} style={{ width: 210 }} />
-          <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <label style={{ color: 'var(--ink-3)', fontSize: 13 }}>หัวกลุ่ม</label>
-            <Picker options={stOpts} value={nHost} onChange={setNHost}
-              placeholder="สาขาทางผ่าน" width={250} />
-          </span>
-          <input type="text" placeholder="หมายเหตุ" value={nNote}
-            onChange={(e) => setNNote(e.target.value)} style={{ width: 200 }} />
-          <button className="btn" onClick={() => void createGroup()}
-            disabled={!nName.trim() || !nHost}>สร้างกลุ่ม</button>
+      <div className="card" style={{ padding: 0 }}>
+        <div className="row" style={{ padding: '18px 22px 14px' }}>
+          <input type="text" placeholder="ค้นหาสาขา" value={q}
+            onChange={(e) => setQ(e.target.value)} style={{ width: 260 }} />
+          <button className={`btn ${only === 'all' ? '' : 'ghost'}`}
+            style={{ padding: '6px 14px', fontSize: 13.5 }}
+            onClick={() => setOnly('all')}>ทั้งหมด</button>
+          <button className={`btn ${only === 'host' ? '' : 'ghost'}`}
+            style={{ padding: '6px 14px', fontSize: 13.5 }}
+            onClick={() => setOnly('host')}>เฉพาะจุดรับฝาก {hostOf.size}</button>
+          <span style={{ fontSize: 13, color: 'var(--ink-3)' }}>{shown.length} รายการ</span>
+        </div>
+
+        <div className="tw" style={{ border: 0, borderTop: '1px solid var(--rule)', maxHeight: '60vh' }}>
+          <table>
+            <thead>
+              <tr>
+                <th style={{ width: 250 }}>สาขา</th>
+                <th>สาขาที่ฝากของไว้ที่นี่</th>
+                <th style={{ width: 120 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map((s) => {
+                const host = hostOf.get(s.plant_code)
+                const via = hostedBy.get(s.plant_code)
+                return (
+                  <tr key={s.plant_code}>
+                    <td>
+                      <span style={{ fontWeight: host ? 600 : 400 }}>{s.branch_name}</span>
+                      {via && (
+                        <div style={{ fontSize: 11.5, color: 'var(--oil)', marginTop: 2 }}>
+                          ฝากไว้ที่ {nameOf.get(via) ?? via}
+                        </div>
+                      )}
+                      {host && !host.active && (
+                        <span className="tag" style={{ marginLeft: 6 }}>ปิดอยู่</span>
+                      )}
+                    </td>
+
+                    <td>
+                      <div className="row" style={{ gap: 6 }}>
+                        {(host?.members ?? []).map((m) => (
+                          <span key={m.plant_code} className="tag ok"
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                            {m.branch_name}
+                            <button
+                              style={{
+                                border: 0, background: 'none', cursor: 'pointer', padding: 0,
+                                color: 'inherit', fontSize: 13, lineHeight: 1, opacity: 0.7,
+                              }}
+                              title="เอาออก"
+                              onClick={() => void removeMember(s.plant_code, m.plant_code)}>×</button>
+                          </span>
+                        ))}
+
+                        {adding === s.plant_code ? (
+                          <span className="row" style={{ gap: 6 }}>
+                            <Picker options={opts.filter((o) =>
+                              o.value !== s.plant_code
+                              && !hostOf.has(o.value)
+                              && !hostedBy.has(o.value))}
+                              value={pick} onChange={setPick}
+                              placeholder="เลือกสาขา" width={230} />
+                            <button className="btn" style={{ padding: '5px 13px', fontSize: 13 }}
+                              disabled={!pick}
+                              onClick={() => void addMember(s.plant_code, pick)}>เพิ่ม</button>
+                            <button className="btn ghost" style={{ padding: '5px 11px', fontSize: 13 }}
+                              onClick={() => { setAdding(null); setPick('') }}>ยกเลิก</button>
+                          </span>
+                        ) : (
+                          !via && (
+                            <button className="btn ghost"
+                              style={{ padding: '4px 12px', fontSize: 13 }}
+                              onClick={() => { setAdding(s.plant_code); setPick(''); setErr('') }}>
+                              + เพิ่มสาขาที่ฝากได้
+                            </button>
+                          )
+                        )}
+                      </div>
+                    </td>
+
+                    <td>
+                      {host && (
+                        <button className="btn ghost" style={{ padding: '4px 12px', fontSize: 13 }}
+                          onClick={() => void toggleGroup(s.plant_code)}>
+                          {host.active ? 'ปิดใช้' : 'เปิดใช้'}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
       </div>
-
-      <dl className="stats">
-        <div className="stat"><dt>กลุ่มทั้งหมด</dt><dd>{groups.length}</dd></div>
-        <div className="stat">
-          <dt>กลุ่มที่เปิดใช้</dt>
-          <dd style={{ color: 'var(--ok)' }}>{groups.filter((g) => g.is_active).length}</dd>
-        </div>
-        <div className="stat">
-          <dt>สาขาที่อยู่ในกลุ่ม</dt><dd>{assigned.size}</dd>
-        </div>
-        <div className="stat">
-          <dt>ยังไม่ได้จัดกลุ่ม</dt>
-          <dd style={{ color: 'var(--ink-3)' }}>{Math.max(stOpts.length - assigned.size, 0)}</dd>
-        </div>
-      </dl>
-
-      {groups.length === 0 ? (
-        <div className="card">
-          <h3>ยังไม่มีกลุ่ม</h3>
-          <p className="hint" style={{ marginBottom: 0 }}>
-            สร้างกลุ่มแรกด้านบน แล้วเพิ่มสาขาที่อยู่ระหว่างทางหรือใกล้เคียงเข้าไป
-          </p>
-        </div>
-      ) : groups.map((g) => (
-        <div className="card" key={g.group_id} style={{ opacity: g.is_active ? 1 : 0.55 }}>
-          <div className="spread">
-            <div>
-              <h3 style={{ marginBottom: 4 }}>
-                {g.name}
-                {!g.is_active && <span className="tag" style={{ marginLeft: 8 }}>ปิดอยู่</span>}
-              </h3>
-              <p className="hint" style={{ marginBottom: 0 }}>
-                ฝากของที่ <strong>{g.host_name ?? g.host_plant ?? '—'}</strong>
-                {' · '}สมาชิก {g.member_count} สาขา
-                {g.note && ` · ${g.note}`}
-              </p>
-            </div>
-            <div className="row" style={{ gap: 8 }}>
-              <button className="btn ghost" style={{ padding: '6px 14px', fontSize: 13 }}
-                onClick={() => setOpen(open === g.group_id ? null : g.group_id)}>
-                {open === g.group_id ? 'ปิด' : 'จัดการสมาชิก'}
-              </button>
-              <button className="btn ghost" style={{ padding: '6px 14px', fontSize: 13 }}
-                onClick={() => void setActive(g.group_id, !g.is_active)}>
-                {g.is_active ? 'ปิดใช้' : 'เปิดใช้'}
-              </button>
-              <button className="btn ghost" style={{ padding: '6px 14px', fontSize: 13 }}
-                onClick={() => void delGroup(g.group_id, g.name)}>ลบ</button>
-            </div>
-          </div>
-
-          {open === g.group_id && (
-            <div style={{ marginTop: 16 }}>
-              <div className="row" style={{ marginBottom: 12 }}>
-                <Picker options={stOpts.filter((o) => o.value !== g.host_plant
-                  && !g.members.some((m) => m.plant_code === o.value))}
-                  value={addTo[g.group_id] ?? ''}
-                  onChange={(v) => setAddTo((p) => ({ ...p, [g.group_id]: v }))}
-                  placeholder="เลือกสาขาที่จะฝากของ" width={280} />
-                <button className="btn" onClick={() => void addMember(g.group_id)}
-                  disabled={!addTo[g.group_id]}>เพิ่มเข้ากลุ่ม</button>
-              </div>
-
-              {g.members.length === 0 ? (
-                <div className="note">ยังไม่มีสมาชิก — เพิ่มสาขาที่รถไม่ค่อยเข้าหรืออยู่ระหว่างทาง</div>
-              ) : (
-                <table>
-                  <thead>
-                    <tr><th>สาขา</th><th>จังหวัด</th><th>รหัส</th><th></th></tr>
-                  </thead>
-                  <tbody>
-                    {g.members.map((m) => (
-                      <tr key={m.plant_code}>
-                        <td>{m.branch_name}</td>
-                        <td style={{ color: 'var(--ink-3)' }}>
-                          {m.province?.replace('จังหวัด', '')}
-                        </td>
-                        <td className="num" style={{ color: 'var(--ink-3)' }}>{m.plant_code}</td>
-                        <td style={{ width: 90 }}>
-                          <button className="btn ghost" style={{ padding: '4px 12px', fontSize: 13 }}
-                            onClick={() => void removeMember(g.group_id, m.plant_code)}>
-                            เอาออก
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          )}
-        </div>
-      ))}
 
       <div className="card">
         <div className="spread">
@@ -278,12 +319,12 @@ export default function StationGroups() {
             <p className="hint">
               {preview.length} สาขาจะได้ของในรอบนี้ทั้งที่รถไม่ได้เข้าโดยตรง
             </p>
-            <div className="tw" style={{ maxHeight: '40vh' }}>
+            <div className="tw" style={{ maxHeight: '38vh' }}>
               <table>
                 <thead>
                   <tr>
                     <th>สาขาที่ได้ของ</th><th>ฝากไว้ที่</th>
-                    <th>กลุ่ม</th><th className="num">รถไม่เข้ามา</th>
+                    <th className="num">รถไม่เข้ามา</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -291,7 +332,6 @@ export default function StationGroups() {
                     <tr key={i}>
                       <td>{r.branch_name}</td>
                       <td>{r.host_name}</td>
-                      <td><span className="tag ok">{r.group_name}</span></td>
                       <td className="num" style={{
                         color: r.days_no_trip > 14 ? 'var(--alarm)' : 'var(--ink-3)',
                       }}>
@@ -307,8 +347,8 @@ export default function StationGroups() {
       </div>
 
       <div className="note">
-        บรรทัดที่เกิดจากการฝากจะมีป้าย <strong>ฝากที่ …</strong> กำกับในหน้าคำนวณ
-        และในไฟล์เทมเพลตยังใช้รหัสสาขาปลายทางจริง ไม่ใช่สาขาที่ฝาก
+        ฝากซ้อนกันหลายชั้นไม่ได้ — สาขาที่ถูกฝากไว้ที่อื่นแล้ว จะเป็นจุดรับฝากให้คนอื่นไม่ได้
+        เพราะของจะไปไม่ถึง · บรรทัดที่เกิดจากการฝากมีป้าย <strong>ฝากที่ …</strong> ในหน้าคำนวณ
       </div>
 
       {msg && <div className="note good" style={{ position: 'sticky', bottom: 16, marginTop: 14 }}>{msg}</div>}
