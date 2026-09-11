@@ -591,3 +591,109 @@ td.num input { width: 74px; text-align: right; font-family: var(--mono); padding
   .iconbtn { width: 36px; height: 36px; }
   .uname { display: none; }
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   หน้างานประจำวัน — แผ่นปุ่มเรียงเป็นตาราง
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* แถบบนสุด บอกสถานะของวันนี้ */
+.hero {
+  position: relative; overflow: hidden;
+  border-radius: 20px; padding: 24px 26px; margin-bottom: 18px;
+  background: linear-gradient(135deg, #5b4be8 0%, #7a63f0 55%, #9d7df5 100%);
+  color: #fff;
+}
+.hero::after {
+  content: ''; position: absolute; right: -50px; top: -60px;
+  width: 210px; height: 210px; border-radius: 50%;
+  background: rgba(255, 255, 255, .1);
+}
+.hero h3 { color: #fff; font-size: 21px; margin: 0 0 6px; letter-spacing: -.02em; }
+.hero p { margin: 0; font-size: 13.5px; color: rgba(255, 255, 255, .78); }
+.hero .hero-row {
+  position: relative; z-index: 1;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 20px; flex-wrap: wrap;
+}
+.hero .chips { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 14px; }
+.hero .chip {
+  font-size: 12px; padding: 4px 11px; border-radius: 99px;
+  background: rgba(255, 255, 255, .18); color: #fff; white-space: nowrap;
+}
+.hero .chip.bad  { background: rgba(255, 130, 120, .38); }
+.hero .chip.good { background: rgba(140, 240, 190, .28); }
+
+/* ตารางแผ่นปุ่ม */
+.tiles {
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  margin-bottom: 18px;
+}
+.tile {
+  position: relative; text-align: left; cursor: pointer;
+  border: 0; border-radius: 18px; padding: 16px;
+  min-height: 138px;
+  display: flex; flex-direction: column; justify-content: space-between;
+  font-family: var(--sans);
+  transition: transform .16s, box-shadow .16s;
+}
+.tile:hover { transform: translateY(-3px); box-shadow: 0 10px 26px rgba(19, 26, 23, .12); }
+.tile:active { transform: translateY(0); }
+
+.tile .ico {
+  width: 44px; height: 44px; border-radius: 13px;
+  display: grid; place-items: center;
+  background: rgba(255, 255, 255, .72);
+}
+.tile b { display: block; font-size: 15px; font-weight: 700; letter-spacing: -.01em; }
+.tile span { display: block; font-size: 11.5px; opacity: .72; margin-top: 2px; }
+
+/* สีพาสเทลของแต่ละแผ่น */
+.tile.t-violet { background: #ece8fd; color: #3b2f8f; }
+.tile.t-green  { background: #e2f5ea; color: #12603f; }
+.tile.t-amber  { background: #fdf1dc; color: #7a5410; }
+.tile.t-rose   { background: #fde9ec; color: #8f2740; }
+.tile.t-sky    { background: #e5f0fd; color: #204a86; }
+.tile.t-lime   { background: #edf6da; color: #4a6312; }
+
+/* แผ่นเน้น สีเข้ม ใช้กับงานหลักของวัน */
+.tile.t-dark {
+  background: var(--nav, #151d19); color: #fff;
+}
+.tile.t-dark .ico { background: rgba(255, 255, 255, .14); }
+.tile.t-dark span { opacity: .6; }
+.tile.t-dark .arrow {
+  position: absolute; right: 16px; bottom: 16px;
+  width: 34px; height: 34px; border-radius: 50%;
+  background: var(--brand, #12a56b); display: grid; place-items: center;
+}
+
+/* ป้ายตัวเลขมุมขวาบน */
+.tile .badge {
+  position: absolute; top: 14px; right: 14px;
+  min-width: 24px; height: 24px; padding: 0 8px;
+  border-radius: 99px; display: grid; place-items: center;
+  font-size: 12px; font-weight: 700;
+  background: rgba(255, 255, 255, .8);
+}
+.tile .badge.hot { background: #e0503a; color: #fff; }
+.tile .badge.ok  { background: #12a56b; color: #fff; }
+
+/* หัวข้อคั่นกลุ่มแผ่นปุ่ม */
+.tiles-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin: 22px 0 10px;
+}
+.tiles-head h3 { margin: 0; font-size: 16px; }
+.tiles-head a, .tiles-head button {
+  border: 0; background: none; cursor: pointer; padding: 0;
+  font-family: var(--sans); font-size: 13px; color: var(--brand, #12a56b);
+  font-weight: 600;
+}
+
+@media (max-width: 620px) {
+  .tiles { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .tile { min-height: 122px; padding: 14px; border-radius: 16px; }
+  .tile .ico { width: 38px; height: 38px; border-radius: 11px; }
+  .hero { padding: 20px; border-radius: 18px; }
+}
