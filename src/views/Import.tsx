@@ -37,9 +37,11 @@ const SOURCES: Source[] = [
 interface Log { ok: boolean; text: string }
 interface Last { source: string; snapshot_date: string; uploaded_at: string; row_count: number }
 
-export default function Import({ snapshotDate, setSnapshotDate }: {
+export default function Import({ snapshotDate, setSnapshotDate, compact }: {
   snapshotDate: string
   setSnapshotDate: (d: string) => void
+  /** โหมดย่อ — แสดงเฉพาะไฟล์ประจำรอบ ใช้ในหน้างานประจำวัน */
+  compact?: boolean
 }) {
   const [busy, setBusy] = useState<Kind | null>(null)
   const [last, setLast] = useState<Record<string, Last>>({})
@@ -347,6 +349,23 @@ export default function Import({ snapshotDate, setSnapshotDate }: {
   const setupDone = setup.every((s) => last[s.kind])
   const dailyDone = daily.filter((s) => !s.optional).every(
     (s) => last[s.kind]?.snapshot_date === snapshotDate)
+
+  if (compact) return (
+    <>
+      <div className="row" style={{ marginBottom: 14 }}>
+        <label style={{ color: 'var(--ink-3)', fontSize: 13 }}>ข้อมูล ณ วันที่</label>
+        <input type="date" value={snapshotDate}
+          onChange={(e) => setSnapshotDate(e.target.value)} />
+        <span className={`tag ${dailyDone ? 'ok' : 'oil'}`}>
+          {dailyDone ? 'ไฟล์ครบแล้ว' : 'ยังไม่ครบ'}
+        </span>
+        {!setupDone && (
+          <span className="tag alarm">ยังไม่ได้อัปข้อมูลตั้งต้น</span>
+        )}
+      </div>
+      {daily.map(card)}
+    </>
+  )
 
   return (
     <>
