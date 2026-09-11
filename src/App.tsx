@@ -12,6 +12,7 @@ import ManualTransfer from './views/ManualTransfer'
 import Depot from './views/Depot'
 import Receiving from './views/Receiving'
 import Shortage from './views/Shortage'
+import StationGroups from './views/StationGroups'
 import KpiPage from './views/Kpi'
 import Settings from './views/Settings'
 import Users from './views/Users'
@@ -22,7 +23,7 @@ type VTDoc = Document & {
   startViewTransition?: (cb: () => void) => { finished: Promise<void> }
 }
 type Tab = 'home' | 'import' | 'run' | 'transfer' | 'transferB' | 'manual' | 'receiving'
-  | 'shortage' | 'depot' | 'kpi' | 'settings' | 'users'
+  | 'shortage' | 'groups' | 'depot' | 'kpi' | 'settings' | 'users'
 
 /** ตัวกรองที่ส่งข้ามหน้าได้ เช่นกดตัวเลขในหน้าภาพรวมแล้วเด้งไปหน้าของขาด */
 export interface Preset { kind?: string; name?: string }
@@ -107,6 +108,7 @@ export default function App() {
     {
       label: 'ระบบ',
       items: [
+        { id: 'groups', label: 'กลุ่มสถานี' },
         { id: 'settings', label: 'ตั้งค่าการคำนวณ' },
         ...(me.role === 'admin' ? [{ id: 'users' as Tab, label: 'ผู้ใช้' }] : []),
       ],
@@ -198,6 +200,7 @@ export default function App() {
           {tab === 'receiving' && <Receiving />}
           {tab === 'depot' && <Depot />}
           {tab === 'kpi' && <KpiPage />}
+          {tab === 'groups' && <StationGroups />}
           {tab === 'settings' && <Settings />}
           {tab === 'users' && me.role === 'admin' && <Users me={me.username} />}
         </div>
