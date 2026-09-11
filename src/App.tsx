@@ -5,6 +5,7 @@ import { supabase } from './lib/supabase'
 import Login, { Pending } from './views/Login'
 import Dashboard from './views/Dashboard'
 import ImportPage from './views/Import'
+import Daily from './views/Daily'
 import Run from './views/Run'
 import Transfers from './views/Transfers'
 import TransfersB from './views/TransfersB'
@@ -19,10 +20,31 @@ import Users from './views/Users'
 
 const today = () => new Date().toISOString().slice(0, 10)
 
+/** จำหน้าที่เปิดค้างไว้ 1 ชั่วโมง รีเฟรชแล้วกลับมาที่เดิม
+ *  ใช้ sessionStorage ไม่ได้เพราะปิดแท็บแล้วหาย จึงใช้ localStorage พร้อมเวลาหมดอายุ */
+const TAB_KEY = 'mkdepot.tab'
+const TAB_TTL = 60 * 60 * 1000
+
+function loadTab(): { tab: string; back: boolean } | null {
+  try {
+    const raw = localStorage.getItem(TAB_KEY)
+    if (!raw) return null
+    const v = JSON.parse(raw) as { tab: string; back: boolean; at: number }
+    if (Date.now() - v.at > TAB_TTL) { localStorage.removeItem(TAB_KEY); return null }
+    return { tab: v.tab, back: v.back }
+  } catch { return null }
+}
+
+function saveTab(tab: string, back: boolean) {
+  try {
+    localStorage.setItem(TAB_KEY, JSON.stringify({ tab, back, at: Date.now() }))
+  } catch { /* โหมดส่วนตัวอาจเขียนไม่ได้ ไม่ใช่เรื่องคอขาดบาดตาย */ }
+}
+
 type VTDoc = Document & {
   startViewTransition?: (cb: () => void) => { finished: Promise<void> }
 }
-type Tab = 'home' | 'import' | 'run' | 'transfer' | 'transferB' | 'manual' | 'receiving'
+type Tab = 'home' | 'daily' | 'import' | 'run' | 'transfer' | 'transferB' | 'manual' | 'receiving'
   | 'shortage' | 'groups' | 'depot' | 'kpi' | 'settings' | 'users'
 
 /** ตัวกรองที่ส่งข้ามหน้าได้ เช่นกดตัวเลขในหน้าภาพรวมแล้วเด้งไปหน้าของขาด */
@@ -34,11 +56,33 @@ export default function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [me, setMe] = useState<Me | null>(null)
   const [ready, setReady] = useState(false)
-  const [tab, setTab] = useState<Tab>('home')
-  const tabRef = useRef<Tab>('home')
-  useEffect(() => { tabRef.current = tab }, [tab])
+
+  // อ่านค่าที่จำไว้ครั้งเดียวตอนเปิดหน้า
+  // ถ้าจำหน้าหลังบ้านไว้แต่โหมดเป็นโหมดง่าย ให้กลับไปหน้างานประจำวัน
+  const [saved] = useState(() => {
+    const v = loadTab()
+    if (!v) return null
+    if (!v.back && v.tab !== 'daily' && v.tab !== 'home') return { tab: 'daily', back: false }
+    return v
+  })
+  const [tab, setTab] = useState<Tab>((saved?.tab as Tab) ?? 'daily')
+  const tabRef = useRef<Tab>((saved?.tab as Tab) ?? 'daily')
   const [snapshotDate, setSnapshotDate] = useState(today())
   const [preset, setPreset] = useState<Preset | undefined>()
+  /** โหมดง่ายซ่อนเมนูทั้งหมด เหลือเฉพาะงานประจำวัน · โหมดเต็มคือหลังบ้าน */
+  const [full, setFull] = useState(saved?.back ?? false)
+
+  useEffect(() => { tabRef.current = tab; saveTab(tab, full) }, [tab, full])
+
+  const enterFull = useCallback(() => {
+    setFull(true)
+    navigate('home')
+  }, [])
+
+  const exitFull = useCallback(() => {
+    setFull(false)
+    navigate('daily')
+  }, [])
 
 
   /** เปลี่ยนหน้าแบบมอร์ฟ — เบราว์เซอร์ถ่ายภาพหน้าเดิมแล้วค่อย ๆ กลายเป็นหน้าใหม่
@@ -85,7 +129,13 @@ export default function App() {
 
   /** เมนูแบ่งตามลักษณะงาน ไม่ใช่เรียงตัวเลขยาว ๆ */
   const groups: { label: string | null; items: Item[] }[] = [
-    { label: null, items: [{ id: 'home', label: 'ภาพรวม' }] },
+    {
+      label: null,
+      items: [
+        { id: 'home', label: 'ภาพรวม' },
+        { id: 'daily', label: 'งานประจำวัน' },
+      ],
+    },
     {
       label: 'งานประจำวัน',
       items: [
@@ -140,33 +190,57 @@ export default function App() {
             </span>
           </div>
 
-          <nav className="topnav">
-            {navItems.map((t) => (
-              <span key={t.id} className="navcell">
-                {t.newGroup && <i className="sep" aria-hidden="true" />}
-                <button aria-current={tab === t.id} onClick={() => navigate(t.id)}>
-                  {t.step && <span className="step">{t.step}</span>}
-                  {t.label}
-                </button>
-              </span>
-            ))}
-          </nav>
+          {full ? (
+            <nav className="topnav">
+              {navItems.map((t) => (
+                <span key={t.id} className="navcell">
+                  {t.newGroup && <i className="sep" aria-hidden="true" />}
+                  <button aria-current={tab === t.id} onClick={() => navigate(t.id)}>
+                    {t.step && <span className="step">{t.step}</span>}
+                    {t.label}
+                  </button>
+                </span>
+              ))}
+            </nav>
+          ) : (
+            <nav className="topnav">
+              <button aria-current={tab === 'daily'} onClick={() => navigate('daily')}>
+                งานประจำวัน
+              </button>
+              <span className="navcell"><i className="sep" aria-hidden="true" /></span>
+              <button aria-current={tab === 'home'} onClick={() => navigate('home')}>
+                ภาพรวม
+              </button>
+            </nav>
+          )}
 
           <div className="who">
-            <button className="iconbtn" title="นำเข้าข้อมูล" onClick={() => navigate('import')}>
+            {full ? (
+              <button className="btn ghost" style={{ padding: '7px 15px', fontSize: 13.5 }}
+                onClick={exitFull} title="กลับไปหน้างานประจำวัน">
+                ← โหมดง่าย
+              </button>
+            ) : (
+              <button className="btn ghost" style={{ padding: '7px 15px', fontSize: 13.5 }}
+                onClick={enterFull} title="เปิดเมนูทั้งหมด">
+                หลังบ้าน →
+              </button>
+            )}
+
+            {full && <button className="iconbtn" title="นำเข้าข้อมูล" onClick={() => navigate('import')}>
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none">
                 <path d="M12 16V4m0 0L8 8m4-4 4 4M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2"
                   stroke="currentColor" strokeWidth="1.9"
                   strokeLinecap="round" strokeLinejoin="round" />
               </svg>
-            </button>
-            <button className="iconbtn" title="ตั้งค่าการคำนวณ" onClick={() => navigate('settings')}>
+            </button>}
+            {full && <button className="iconbtn" title="ตั้งค่าการคำนวณ" onClick={() => navigate('settings')}>
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none">
                 <circle cx="12" cy="12" r="3.2" stroke="currentColor" strokeWidth="1.9" />
                 <path d="M12 2.5v2M12 19.5v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2.5 12h2M19.5 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"
                   stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
               </svg>
-            </button>
+            </button>}
 
             <span className="userchip" title={me.username}>
               <span className="avatar">{initial}</span>
@@ -191,6 +265,9 @@ export default function App() {
         {/* key=tab ทำให้ React สร้างใหม่ แอนิเมชันจึงเล่นซ้ำ */}
         <div className="page" key={tab}>
           {tab === 'home' && <Dashboard go={navigate} />}
+          {tab === 'daily' && (
+            <Daily snapshotDate={snapshotDate} setSnapshotDate={setSnapshotDate} />
+          )}
           {tab === 'import' && <ImportPage snapshotDate={snapshotDate} setSnapshotDate={setSnapshotDate} />}
           {tab === 'run' && <Run snapshotDate={snapshotDate} />}
           {tab === 'transfer' && <Transfers snapshotDate={snapshotDate} />}
