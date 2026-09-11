@@ -46,6 +46,13 @@ export default function Import({ snapshotDate, setSnapshotDate, compact }: {
   const [busy, setBusy] = useState<Kind | null>(null)
   const [last, setLast] = useState<Record<string, Last>>({})
   const [logs, setLogs] = useState<Record<string, Log>>({})
+  const [peek, setPeek] = useState<Kind | null>(null)
+  const [peekData, setPeekData] = useState<{
+    batches: { snapshot_date: string; uploaded_at: string; row_count: number; filename: string }[]
+    rows: number
+    dates: { d: string; n: number }[]
+    sample: string[]
+  } | null>(null)
   const [progress, setProgress] = useState('')
 
   const say = (k: Kind, ok: boolean, text: string) =>
@@ -298,6 +305,80 @@ export default function Import({ snapshotDate, setSnapshotDate, compact }: {
     return { date: d.snapshot_date, rows: d.row_count, days }
   }
 
+  /** ตารางปลายทางของแต่ละไฟล์ ใช้ดูว่ามีข้อมูลอะไรค้างอยู่ */
+  const TARGET: Record<Kind, { table: string; dateCol: string; label: string }> = {
+    master_items: { table: 'items', dateCol: '', label: 'รายการสินค้า' },
+    datastation:  { table: 'station_master', dateCol: '', label: 'ทะเบียนสถานี' },
+    power_bi:     { table: 'stock_snapshots', dateCol: 'snapshot_date', label: 'สต็อกรายสาขา' },
+    trips:        { table: 'delivery_plan', dateCol: 'trip_date', label: 'แผนเที่ยวรถ' },
+    me2n:         { table: 'in_transit', dateCol: 'snapshot_date', label: 'ของระหว่างทาง' },
+    wms:          { table: 'depot_stock', dateCol: 'snapshot_date', label: 'สต็อกคลัง' },
+  }
+
+  async function openPeek(kind: Kind) {
+    if (peek === kind) { setPeek(null); setPeekData(null); return }
+    setPeek(kind); setPeekData(null)
+    const t = TARGET[kind]
+
+    const { data: b } = await supabase.from('import_batches')
+      .select('snapshot_date, uploaded_at, row_count, filename')
+      .eq('source', kind).eq('status', 'committed')
+      .order('uploaded_at', { ascending: false }).limit(8)
+
+    let rows = 0
+    let dates: { d: string; n: number }[] = []
+    let sample: string[] = []
+
+    if (t.dateCol) {
+      const { count } = await supabase.from(t.table)
+        .select('*', { count: 'exact', head: true })
+        .eq(t.dateCol, snapshotDate)
+      rows = count ?? 0
+
+      // ดูว่ามีข้อมูลค้างของวันอื่นอยู่ไหม
+      const { data: all } = await supabase.from(t.table).select(t.dateCol).limit(5000)
+      const m = new Map<string, number>()
+      ;(all ?? []).forEach((r) => {
+        const d = (r as Record<string, string>)[t.dateCol]
+        m.set(d, (m.get(d) ?? 0) + 1)
+      })
+      dates = [...m.entries()].map(([d, n]) => ({ d, n }))
+        .sort((a, b) => b.d.localeCompare(a.d)).slice(0, 6)
+
+      if (kind === 'trips') {
+        const { data: p } = await supabase.from('delivery_plan')
+          .select('plant_code, stations(branch_name)')
+          .eq('trip_date', snapshotDate).limit(200)
+        sample = (p ?? []).map((r) => {
+          const st = r.stations as { branch_name: string } | null
+          return st?.branch_name ?? (r.plant_code as string)
+        }).sort()
+      }
+    } else {
+      const { count } = await supabase.from(t.table).select('*', { count: 'exact', head: true })
+      rows = count ?? 0
+    }
+
+    setPeekData({ batches: (b ?? []) as never, rows, dates, sample })
+  }
+
+  /** ล้างข้อมูลของวันที่เลือก แล้วอัปใหม่ได้สะอาด */
+  async function clearDay(kind: Kind) {
+    const t = TARGET[kind]
+    if (!t.dateCol) return
+    if (!confirm(`ลบ${t.label}ของวันที่ ${snapshotDate} ทั้งหมด แล้วอัปไฟล์ใหม่`)) return
+
+    if (kind === 'trips') {
+      await supabase.rpc('reset_trip_plan', { p_trip_date: snapshotDate })
+    } else {
+      await supabase.from(t.table).delete().eq(t.dateCol, snapshotDate)
+    }
+    await loadLast()
+    // เรียกสองครั้งเพื่อปิดแล้วเปิดใหม่ ให้ข้อมูลอัปเดต
+    await openPeek(kind)
+    await openPeek(kind)
+  }
+
   function card(s: Source) {
     const log = logs[s.kind]
     const info = fmt(last[s.kind])
@@ -322,6 +403,7 @@ export default function Import({ snapshotDate, setSnapshotDate, compact }: {
               <p style={{ margin: 0, fontSize: 12.5, color: 'var(--ink-3)' }}>ยังไม่เคยนำเข้า</p>
             )}
           </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
           <label className="file">
             <input
               type="file" accept=".xlsx,.xls,.xlsm" disabled={busy !== null}
@@ -333,7 +415,96 @@ export default function Import({ snapshotDate, setSnapshotDate, compact }: {
             />
             {busy === s.kind ? (progress || 'กำลังทำงาน…') : info ? 'อัปใหม่' : 'เลือกไฟล์'}
           </label>
+          <button className="btn ghost" style={{ padding: '6px 15px', fontSize: 13 }}
+            onClick={() => void openPeek(s.kind)}>
+            {peek === s.kind ? 'ปิด' : 'ดูข้อมูลในระบบ'}
+          </button>
+          </div>
         </div>
+
+        {peek === s.kind && (
+          <div style={{ marginTop: 14 }}>
+            {!peekData ? (
+              <div className="note">กำลังอ่าน…</div>
+            ) : (
+              <>
+                <div className="row" style={{ marginBottom: 12 }}>
+                  <span className={`tag ${peekData.rows ? 'ok' : 'alarm'}`}>
+                    {TARGET[s.kind].label}ของวันที่ {snapshotDate} · {peekData.rows.toLocaleString()} แถว
+                  </span>
+                  {TARGET[s.kind].dateCol && peekData.dates.length > 1 && (
+                    <span className="tag oil">
+                      มีข้อมูลค้างของวันอื่น {peekData.dates.length - 1} วัน
+                    </span>
+                  )}
+                  {TARGET[s.kind].dateCol && (
+                    <button className="btn ghost" style={{ padding: '5px 13px', fontSize: 13 }}
+                      onClick={() => void clearDay(s.kind)}>
+                      ล้างข้อมูลของวันนี้
+                    </button>
+                  )}
+                </div>
+
+                {peekData.dates.length > 0 && (
+                  <div style={{ marginBottom: 12 }}>
+                    <p className="hint" style={{ marginBottom: 6 }}>
+                      ข้อมูลที่อยู่ในระบบตอนนี้ แยกตามวันที่
+                    </p>
+                    <div className="row" style={{ gap: 6 }}>
+                      {peekData.dates.map((d) => (
+                        <span key={d.d}
+                          className={`tag ${d.d === snapshotDate ? 'ok' : ''}`}>
+                          {d.d} · {d.n.toLocaleString()} แถว
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {peekData.sample.length > 0 && (
+                  <div style={{ marginBottom: 12 }}>
+                    <p className="hint" style={{ marginBottom: 6 }}>
+                      สาขาที่จะถูกคำนวณในรอบนี้ {peekData.sample.length} สาขา
+                    </p>
+                    <div className="row" style={{ gap: 5 }}>
+                      {peekData.sample.map((n) => (
+                        <span key={n} className="tag" style={{ fontSize: 11 }}>{n}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <p className="hint" style={{ marginBottom: 6 }}>ประวัติการนำเข้าล่าสุด</p>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>ไฟล์</th><th>ข้อมูลของวันที่</th>
+                      <th>อัปเมื่อ</th><th className="num">แถว</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {peekData.batches.map((b, i) => (
+                      <tr key={i}>
+                        <td style={{ fontSize: 12.5 }}>{b.filename}</td>
+                        <td style={{
+                          color: b.snapshot_date === snapshotDate ? 'var(--ok)' : 'var(--ink-3)',
+                        }}>{b.snapshot_date}</td>
+                        <td style={{ fontSize: 12.5, color: 'var(--ink-3)' }}>
+                          {new Date(b.uploaded_at).toLocaleString('th-TH', {
+                            day: '2-digit', month: '2-digit',
+                            hour: '2-digit', minute: '2-digit',
+                          })}
+                        </td>
+                        <td className="num">{b.row_count?.toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+          </div>
+        )}
+
         {log && (
           <div className={`note ${log.ok ? 'good' : 'bad'}`}
             style={{ marginTop: 12, whiteSpace: 'pre-line' }}>
