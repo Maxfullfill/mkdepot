@@ -266,7 +266,7 @@ export default function App() {
         <div className="page" key={tab}>
           {tab === 'home' && <Dashboard go={navigate} />}
           {tab === 'daily' && (
-            <Daily snapshotDate={snapshotDate} setSnapshotDate={setSnapshotDate} />
+            <Daily snapshotDate={snapshotDate} setSnapshotDate={setSnapshotDate} go={navigate} />
           )}
           {tab === 'import' && <ImportPage snapshotDate={snapshotDate} setSnapshotDate={setSnapshotDate} />}
           {tab === 'run' && <Run snapshotDate={snapshotDate} />}
