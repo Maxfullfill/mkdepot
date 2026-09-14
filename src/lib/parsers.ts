@@ -112,15 +112,18 @@ export function parsePowerBI(grid: Grid) {
     const mat = String(row[i.mat] ?? '').trim().replace(/\.0$/, '')
     if (!plant || !mat) { skipped++; continue }
 
-    const rowClass = String(row[i.clsFix] ?? '').trim()
-    const clean = /^Class [ABC]$/i.test(rowClass)
-      ? 'Class ' + rowClass.slice(-1).toUpperCase()
-      : null
+    /** จัดรูปแบบคลาสให้เหมือนกันทั้งสองช่อง จะได้เทียบกันได้ตรง ๆ */
+    const norm = (v: unknown) => {
+      const t = String(v ?? '').trim()
+      return /^Class [ABC]$/i.test(t) ? 'Class ' + t.slice(-1).toUpperCase() : null
+    }
+    const clean = norm(row[i.clsFix])
+    const cleanDyn = norm(row[i.clsDyn])
 
     stock.set(`${plant}|${mat}`, {
       plant_code: plant, mat_code: mat,
       class_fix: clean,
-      class_dyna: String(row[i.clsDyn] ?? '').trim() || null,
+      class_dyna: cleanDyn,
       depot_class: i.depotCls >= 0 ? String(row[i.depotCls] ?? '').trim() || null : null,
       stock_l: num(row[i.stkL]), stock_pcs: Math.round(num(row[i.stkP])),
       transit_l: i.trL >= 0 ? num(row[i.trL]) : 0,
