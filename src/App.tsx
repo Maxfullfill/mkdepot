@@ -13,6 +13,7 @@ import ManualTransfer from './views/ManualTransfer'
 import Depot from './views/Depot'
 import Receiving from './views/Receiving'
 import Shortage from './views/Shortage'
+import ClassPrep from './views/ClassPrep'
 import StationGroups from './views/StationGroups'
 import KpiPage from './views/Kpi'
 import Settings from './views/Settings'
@@ -45,7 +46,7 @@ type VTDoc = Document & {
   startViewTransition?: (cb: () => void) => { finished: Promise<void> }
 }
 type Tab = 'home' | 'daily' | 'import' | 'run' | 'transfer' | 'transferB' | 'manual' | 'receiving'
-  | 'shortage' | 'groups' | 'depot' | 'kpi' | 'settings' | 'users'
+  | 'shortage' | 'classprep' | 'groups' | 'depot' | 'kpi' | 'settings' | 'users'
 
 /** ตัวกรองที่ส่งข้ามหน้าได้ เช่นกดตัวเลขในหน้าภาพรวมแล้วเด้งไปหน้าของขาด */
 export interface Preset { kind?: string; name?: string }
@@ -152,6 +153,7 @@ export default function App() {
         { id: 'shortage', label: 'ของขาด' },
         { id: 'receiving', label: 'ยังไม่ได้ทำรับ' },
         { id: 'depot', label: 'สั่งเข้าคลัง' },
+        { id: 'classprep', label: 'เตรียมปรับคลาส' },
       ],
     },
     { label: 'ติดตามผล', items: [{ id: 'kpi', label: 'KPI ย้อนหลัง' }] },
@@ -278,6 +280,7 @@ export default function App() {
           {tab === 'shortage' && <Shortage preset={preset} />}
           {tab === 'receiving' && <Receiving />}
           {tab === 'depot' && <Depot />}
+          {tab === 'classprep' && <ClassPrep />}
           {tab === 'kpi' && <KpiPage />}
           {tab === 'groups' && <StationGroups />}
           {tab === 'settings' && <Settings />}
