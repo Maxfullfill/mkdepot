@@ -167,11 +167,25 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
   const [only, setOnly] = useState<'order' | 'all'>('order')
   const [q, setQ] = useState('')
   const [pickMats, setPickMats] = useState<Set<string>>(new Set())
+  const [onlyUp, setOnlyUp] = useState(false)
+  const [upSet, setUpSet] = useState<Set<string>>(new Set())
   const [showFilter, setShowFilter] = useState(false)
   const [sortKey, setSortKey] = useState<SortKey>('none')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
   useEffect(() => setTripDate(snapshotDate), [snapshotDate])
+
+  /** บรรทัดที่คลาสกำลังจะขึ้นเป็น A ในรอบปรับคลาสถัดไป
+   *  ใช้เตรียมของล่วงหน้า Availability จะได้ไม่ตกตอนปรับจริง */
+  useEffect(() => {
+    supabase.from('v_class_change')
+      .select('plant_code, mat_code')
+      .eq('ทิศทาง', 'จะขึ้นเป็น A')
+      .then(({ data }) => {
+        setUpSet(new Set((data ?? []).map(
+          (r) => `${r.plant_code as string}|${r.mat_code as string}`)))
+      })
+  }, [snapshotDate])
 
   /** เปิดหน้ามาแล้วโหลดผลรอบล่าสุดของวันนั้นเลย ไม่ต้องกดคำนวณใหม่
    *  จะกดใหม่ก็ต่อเมื่อข้อมูลเปลี่ยนหรืออยากคำนวณซ้ำ */
@@ -409,6 +423,7 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
   const shown = useMemo(() => {
     let rows = only === 'order' ? mainLines.filter((l) => l.final_pcs > 0) : mainLines
     if (pickMats.size) rows = rows.filter((l) => pickMats.has(l.mat_code))
+    if (onlyUp) rows = rows.filter((l) => upSet.has(`${l.plant_code}|${l.mat_code}`))
     const t = q.trim().toLowerCase()
     if (t) rows = rows.filter((l) =>
       `${l.branch_name ?? ''} ${l.item_desc ?? ''} ${l.plant_code} ${l.mat_code} ${l.flag ?? ''}`
@@ -424,7 +439,7 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
       if (typeof x === 'number' && typeof y === 'number') return (x - y) * dir
       return String(x).localeCompare(String(y), 'th') * dir
     })
-  }, [mainLines, only, pickMats, q, sortKey, sortDir])
+  }, [mainLines, only, pickMats, q, sortKey, sortDir, onlyUp, upSet])
 
   /** เตือนถ้ายังไม่ได้อัป Master Item ใหม่ — จำนวนต่อลังจะเป็น 1 หมด */
   const caseWarning = useMemo(
@@ -1142,9 +1157,18 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
               กรองสินค้า{pickMats.size ? ` (${pickMats.size})` : ''}
             </button>
 
-            {(pickMats.size > 0 || q || sortKey !== 'none') && (
+            {upSet.size > 0 && (
+              <button className={`btn ${onlyUp ? '' : 'ghost'}`}
+                title="บรรทัดที่คลาสกำลังจะขึ้นเป็น A ในรอบปรับคลาสถัดไป — เตรียมของไว้ก่อน Availability จะได้ไม่ตก"
+                onClick={() => setOnlyUp(!onlyUp)}>
+                เตรียมปรับคลาส ({upSet.size})
+              </button>
+            )}
+
+            {(pickMats.size > 0 || q || sortKey !== 'none' || onlyUp) && (
               <button className="btn ghost" onClick={() => {
-                setPickMats(new Set()); setQ(''); setSortKey('none'); setSortDir('desc')
+                setPickMats(new Set()); setQ(''); setSortKey('none')
+                setSortDir('desc'); setOnlyUp(false)
               }}>ล้าง</button>
             )}
 
@@ -1231,7 +1255,14 @@ export default function Run({ snapshotDate }: { snapshotDate: string }) {
                           setExBusy(false)
                         })
                       }}>
-                      <td>{l.branch_name ?? l.plant_code}</td>
+                      <td>
+                        {l.branch_name ?? l.plant_code}
+                        {upSet.has(`${l.plant_code}|${l.mat_code}`) && (
+                          <span className="tag oil"
+                            style={{ marginLeft: 6, fontSize: 10.5 }}
+                            title="คลาสกำลังจะขึ้นเป็น A ในรอบปรับคลาสถัดไป">B→A</span>
+                        )}
+                      </td>
                       <td>{l.item_desc ?? l.mat_code}</td>
                       <td><span className={`tag ${p.cls}`}>{l.flag ?? p.label}</span></td>
                       <td className="num">{l.on_hand_pcs}</td>
