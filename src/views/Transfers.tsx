@@ -36,6 +36,9 @@ export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
   const [busy, setBusy] = useState(false)
   const [pending, setPending] = useState<TLine[]>([])
   const [picked, setPicked] = useState<Set<number>>(new Set())
+  const [cancelIds, setCancelIds] = useState<number[] | null>(null)
+  const [reason, setReason] = useState('')
+  const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
   const [q, setQ] = useState('')
   const [sortKey, setSortKey] = useState<HotKey>('excess_pcs')
@@ -83,6 +86,25 @@ export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
     })
     if (error) { setErr(error.message); return }
     await Promise.all([loadLines(runId), loadPending()])
+  }
+
+  /** ยกเลิกใบที่ยืนยันไปแล้ว คืนของกลับต้นทางทันที
+   *  ใช้เมื่อโอนจริงไม่ได้ เช่นรถไม่ไป ของไม่พอ หรือกดผิด */
+  async function doCancel() {
+    if (!cancelIds?.length) return
+    const { data, error } = await supabase.rpc('cancel_transfer_lines', {
+      p_ids: cancelIds,
+      p_reason: reason || null,
+      p_by: (await supabase.auth.getUser()).data.user?.id ?? null,
+    })
+    if (error) { setErr(error.message); return }
+    const r = data as { ok: boolean; error?: string; cancelled?: number; qty?: number }
+    if (!r.ok) { setErr(r.error ?? 'ยกเลิกไม่สำเร็จ'); return }
+    setCancelIds(null); setReason('')
+    setPicked(new Set())
+    setMsg(`ยกเลิกแล้ว ${r.cancelled} รายการ · คืนของกลับต้นทาง ${r.qty} ชิ้น`)
+    setTimeout(() => setMsg(''), 3000)
+    await Promise.all([loadPending(), loadDash()])
   }
 
   async function receivePicked() {
@@ -313,9 +335,15 @@ export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
                 ดาวน์โหลด{picked.size > 0 ? ` ${picked.size} รายการ` : 'ทั้งหมด'}
               </button>
               {picked.size > 0 && (
-                <button className="btn" onClick={receivePicked}>
-                  รับของ {picked.size} รายการ
-                </button>
+                <>
+                  <button className="btn ghost"
+                    onClick={() => { setCancelIds([...picked]); setReason('') }}>
+                    ยกเลิก {picked.size} รายการ
+                  </button>
+                  <button className="btn" onClick={receivePicked}>
+                    รับของ {picked.size} รายการ
+                  </button>
+                </>
               )}
             </div>
           </div>
@@ -326,6 +354,7 @@ export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
                   <th style={{ width: 34 }}></th>
                   <th>สินค้า</th><th>ต้นทาง</th><th>ปลายทาง</th>
                   <th className="num">จำนวน</th><th className="num">ค้างมา</th>
+                  <th style={{ width: 90 }}></th>
                 </tr>
               </thead>
               <tbody>
@@ -343,6 +372,14 @@ export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
                       color: (l.days_pending ?? 0) > 10 ? 'var(--alarm)' : 'var(--ink-3)',
                     }}>
                       {l.days_pending} วัน
+                    </td>
+                    <td>
+                      <button className="btn ghost"
+                        style={{ padding: '4px 12px', fontSize: 13 }}
+                        title="ยกเลิกใบนี้ คืนของกลับต้นทาง"
+                        onClick={() => { setCancelIds([l.id]); setReason('') }}>
+                        ยกเลิก
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -556,6 +593,56 @@ export default function Transfers({ snapshotDate }: { snapshotDate: string }) {
           </p>
         )}
       </Fold>
+
+      {msg && <div className="note good" style={{ marginBottom: 14 }}>{msg}</div>}
+
+      {cancelIds && (
+        <div className="card" style={{ borderLeft: '4px solid var(--alarm)' }}>
+          <h3>ยืนยันการยกเลิก {cancelIds.length} รายการ</h3>
+          <p className="hint">
+            ของจะถูกคืนกลับต้นทางทันที{' '}
+            {pending.filter((l) => cancelIds.includes(l.id))
+              .reduce((a, l) => a + l.qty, 0)} ชิ้น ·
+            รอบคำนวณถัดไปจะเห็นของที่ต้นทางเหมือนเดิม และอาจเสนอโอนใหม่อีกครั้ง
+          </p>
+
+          <div className="tw" style={{ maxHeight: '22vh', marginBottom: 14 }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>สินค้า</th><th>ต้นทาง</th><th>ปลายทาง</th>
+                  <th className="num">จำนวน</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pending.filter((l) => cancelIds.includes(l.id)).map((l) => (
+                  <tr key={l.id}>
+                    <td>{l.item_name}</td>
+                    <td>{l.from_name}</td>
+                    <td>{l.to_name}</td>
+                    <td className="num"><strong>{l.qty}</strong></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="row">
+            <label style={{ color: 'var(--ink-3)', fontSize: 13 }}>เหตุผล</label>
+            <input type="text" placeholder="เช่น รถไม่ได้ไปสาขานี้" value={reason}
+              onChange={(e) => setReason(e.target.value)} style={{ width: 260 }} />
+            {['รถไม่ไป', 'ของไม่พอ', 'กดผิด'].map((r) => (
+              <button key={r} className="btn ghost"
+                style={{ padding: '5px 13px', fontSize: 13 }}
+                onClick={() => setReason(r)}>{r}</button>
+            ))}
+            <span style={{ flex: 1 }} />
+            <button className="btn ghost"
+              onClick={() => { setCancelIds(null); setReason('') }}>ไม่ยกเลิกแล้ว</button>
+            <button className="btn" onClick={() => void doCancel()}>ยืนยันยกเลิก</button>
+          </div>
+        </div>
+      )}
     </>
   )
 }
